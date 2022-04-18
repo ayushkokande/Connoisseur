@@ -1,4 +1,4 @@
-# YelpCamp
+# Connoisseur
 
 > A Node.js web application project from the Udemy course - [The Web Developer Bootcamp](https://www.udemy.com/the-web-developer-bootcamp/)
 
