@@ -19,23 +19,38 @@
 					<li class="nav-item"><a class="nav-link" href="/restaurants">Restaurants</a></li>
 				</ul>
 				<ul class="navbar-nav ml-auto">
-					<% if (!currentUser) { %>
+					{{if not .CurrentUser}}
 						<li class="nav-item"><a class="nav-link" href="/login">Login</a></li>
 						<li class="nav-item"><a class="nav-link" href="/register">Sign Up</a></li>
-					<% } else { %>
-						<li class="nav-item"><span class="navbar-text mr-3">Signed in as <strong><%= currentUser.username %></strong></span></li>
-						<li class="nav-item"><a class="nav-link" href="/logout">Logout</a></li>
-					<% } %>
+					{{else}}
+						<li class="nav-item"><span class="navbar-text mr-3">Signed in as <strong>{{.CurrentUser.Username}}</strong></span></li>
+						<li class="nav-item">
+							<form action="/logout" method="POST" class="form-inline">
+								{{.CSRFField}}
+								<button class="btn btn-link nav-link" type="submit">Logout</button>
+							</form>
+						</li>
+					{{end}}
 				</ul>
 			</div>
 		</div>
 	</nav>
 
 	<div class="container mt-3">
-		<% if (flashErrorMessage && flashErrorMessage.length > 0) { %>
-			<div class="alert alert-danger" role="alert"><%= flashErrorMessage %></div>
-		<% } %>
-		<% if (flashSuccessMessage && flashSuccessMessage.length > 0) { %>
-			<div class="alert alert-success" role="alert"><%= flashSuccessMessage %></div>
-		<% } %>
+		{{range .FlashError}}
+			<div class="alert alert-danger" role="alert">{{.}}</div>
+		{{end}}
+		{{range .FlashSuccess}}
+			<div class="alert alert-success" role="alert">{{.}}</div>
+		{{end}}
 	</div>
+
+	{{template "content" .}}
+
+	<footer class="text-center text-muted py-4 mt-5">
+		<p>&copy; Connoisseur {{year}} &mdash; Find your next favorite meal.</p>
+	</footer>
+	<script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.slim.min.js"></script>
+	<script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

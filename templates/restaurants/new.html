@@ -1,10 +1,10 @@
-<%- include("../partials/header") %>
-
+{{define "content"}}
 <div class="container">
 	<div class="row justify-content-center">
 		<div class="col-md-6">
 			<h1 class="text-center my-4">Add a New Restaurant</h1>
 			<form action="/restaurants" method="POST">
+				{{$.CSRFField}}
 				<div class="form-group">
 					<label for="name">Name</label>
 					<input class="form-control" id="name" type="text" name="name" placeholder="Restaurant name" required>
@@ -36,5 +36,4 @@
 		</div>
 	</div>
 </div>
-
-<%- include("../partials/footer") %>
+{{end}}
