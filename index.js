@@ -1,46 +1,38 @@
 const express = require("express"),
 	  mongoose = require("mongoose"),
 	  passport = require("passport"),
-	  flash = require('connect-flash'),
-	  bodyParser = require("body-parser"),
+	  flash = require("connect-flash"),
 	  LocalStrategy = require("passport-local"),
 	  methodOverride = require("method-override"),
 	  User = require("./models/user"),
-	  SeedDb = require("./seeds");
+	  seedDb = require("./seeds");
 
-// Add route files as dependencies
-const campgroundRoutes = require("./routes/campgrounds"),
+const restaurantRoutes = require("./routes/restaurants"),
 	  commentRoutes = require("./routes/comments"),
 	  authRoutes = require("./routes/auth");
 
-// Connect to the mongo DB via mongoose *NOTE: if database does not exist, it will be created.
-// Local Goorm URL for the database
+const databaseUrl = process.env.DATABASE_URL || "mongodb://localhost/connoisseur";
 
-const databaseUrl = process.env.DATABASE_URL || "mongodb://localhost/yelp_camp";
-
-// URL to use for the depolyed version on Heroku
 mongoose.connect(databaseUrl, {
-	useNewUrlParser: true, 
-	useCreateIndex: true, 
-	useUnifiedTopology: true, 
-	useFindAndModify: false 
+	useNewUrlParser: true,
+	useCreateIndex: true,
+	useUnifiedTopology: true,
+	useFindAndModify: false
 })
-	.then(() => console.log("Successfully connected to the YelpCamp database!"))
-	.catch(err => console.log("ERROR:" + err.message));
+	.then(() => console.log("Successfully connected to the Connoisseur database!"))
+	.catch(err => console.log("ERROR: " + err.message));
 
-// Use the included libraries
 const app = express();
 app.set("view engine", "ejs");
-app.use(bodyParser.urlencoded({extended: true}));
+app.use(express.urlencoded({ extended: true }));
 app.use(express.static(__dirname + "/public"));
 app.use(methodOverride("_method"));
 app.use(flash());
 
-app.locals.moment = require('moment');
+app.locals.moment = require("moment");
 
-// PASSPORT CONFIGURATION
 app.use(require("express-session")({
-	secret: "YelpCamp is a totally fictional campground site with comments",
+	secret: process.env.SESSION_SECRET || "connoisseur-dev-secret",
 	saveUninitialized: false,
 	resave: false
 }));
@@ -58,19 +50,17 @@ app.use((req, res, next) => {
 	next();
 });
 
-// Requiring routes
-app.use("/campgrounds", campgroundRoutes);
-app.use("/campgrounds/:id/comments", commentRoutes);
+app.use("/restaurants", restaurantRoutes);
+app.use("/restaurants/:id/comments", commentRoutes);
 app.use(authRoutes);
 
-// Clean and re-seed the database
-//SeedDb();
+if (process.env.SEED_DB === "true") {
+	seedDb();
+}
 
-// This is the 'catch all' response for anything that is not found.
-app.get('*', (req, res) => res.send("Error 404 - Page not found..."));
+app.use((req, res) => res.status(404).send("Error 404 - Page not found..."));
 
-// Tell Express to listen for requests (start server)
 const port = process.env.PORT || 3000;
-app.listen(port, function() { 	
-	console.log("YelpCamp server has started and listening on port: " + port);
+app.listen(port, () => {
+	console.log("Connoisseur server has started and is listening on port: " + port);
 });

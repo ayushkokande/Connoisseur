@@ -1,64 +1,59 @@
-const mongoose = require("mongoose");
-const Campground = require("./models/campground");
+const Restaurant = require("./models/restaurant");
 const Comment = require("./models/comment");
 
 const data = [
-    {
-        name: "Cloud's Rest", 
-        image: "https://farm4.staticflickr.com/3795/10131087094_c1c0a1c859.jpg",
-        description: "Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua."
-    },
-    {
-        name: "Desert Mesa", 
-        image: "https://farm6.staticflickr.com/5487/11519019346_f66401b6c1.jpg",
-        description: "Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat."
-    },
-    {
-        name: "Canyon Floor", 
-        image: "https://farm1.staticflickr.com/189/493046463_841a18169e.jpg",
-        description: "Lorem ipsum dolor sit amet, consectetur adipisicing elit, sunt in culpa qui officia deserunt mollit anim id est laborum"
-    },
 	{
-		name: "Carlsbad State Beach",
-		image: "https://encrypted-tbn0.gstatic.com/images?q=tbn%3AANd9GcQaz6NXb0tzvEA21KzVSlOuHB38T2vWlvYZ4f-fT7AhBi9VJ9YJ&usqp=CAU",
-		description: "Ocean side camping. Beautiful cliffs, bathrooms, showers, stairs to the beach."
+		name: "Trattoria del Ponte",
+		image: "https://images.unsplash.com/photo-1414235077428-338989a2e8c0?auto=format&fit=crop&w=800&q=80",
+		cuisine: "Italian",
+		priceRange: "$$$",
+		description: "Handmade pasta and wood-fired pizza in a candlelit dining room. The tagliatelle al ragù is a must."
+	},
+	{
+		name: "Sakura House",
+		image: "https://images.unsplash.com/photo-1579871494447-9811cf80d66c?auto=format&fit=crop&w=800&q=80",
+		cuisine: "Japanese",
+		priceRange: "$$",
+		description: "Intimate sushi counter with daily omakase. Fish flown in fresh, seating limited, reservations recommended."
+	},
+	{
+		name: "La Taqueria Roja",
+		image: "https://images.unsplash.com/photo-1565299585323-38d6b0865b47?auto=format&fit=crop&w=800&q=80",
+		cuisine: "Mexican",
+		priceRange: "$",
+		description: "No-frills counter serving al pastor carved straight from the trompo. Cash only, worth the line."
+	},
+	{
+		name: "The Brass Fig",
+		image: "https://images.unsplash.com/photo-1550966871-3ed3cdb5ed0c?auto=format&fit=crop&w=800&q=80",
+		cuisine: "New American",
+		priceRange: "$$$$",
+		description: "Seasonal tasting menus built around local farms. Elegant room, exceptional wine pairings."
 	}
-]
+];
 
 function seedDb() {
-	// Remove all campgrounds
-	Campground.deleteMany({}, (err) => {
+	Restaurant.deleteMany({}, (err) => {
 		if (err) {
-			console.log (err.message);
-		} else {
-			console.log ("Deleted all campgrounds from the database!");
+			return console.log(err.message);
 		}
-		
-		// // Add a few default campgrounds
-		// data.forEach((seed) => {
-		// 	Campground.create(seed, (err, campground) => {
-		// 		if (err) {
-		// 			console.log (err);
-		// 		} else {
-		// 			console.log ("Added seed campground value: " + campground.name);
-					
-		// 			// Add a few comments
-		// 			Comment.create({
-		// 				text: "This place is really great, but I wish there was internet.",
-		// 				author: "Homer"
-		// 			}, (err, comment) => {
-		// 				if (err) {
-		// 					console.log(err);
-		// 				} else {
-		// 					campground.comments.push(comment);
-		// 					campground.save();
-							
-		// 					console.log ("Added campground comment: " + comment.text);
-		// 				}
-		// 			});
-		// 		}
-		// 	});
-		// });
+		console.log("Deleted all restaurants from the database!");
+
+		Comment.deleteMany({}, (err) => {
+			if (err) {
+				return console.log(err.message);
+			}
+
+			data.forEach((seed) => {
+				Restaurant.create(seed, (err, restaurant) => {
+					if (err) {
+						console.log(err);
+					} else {
+						console.log("Added seed restaurant: " + restaurant.name);
+					}
+				});
+			});
+		});
 	});
 }
 

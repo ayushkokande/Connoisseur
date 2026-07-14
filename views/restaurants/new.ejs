@@ -1,0 +1,40 @@
+<%- include("../partials/header") %>
+
+<div class="container">
+	<div class="row justify-content-center">
+		<div class="col-md-6">
+			<h1 class="text-center my-4">Add a New Restaurant</h1>
+			<form action="/restaurants" method="POST">
+				<div class="form-group">
+					<label for="name">Name</label>
+					<input class="form-control" id="name" type="text" name="name" placeholder="Restaurant name" required>
+				</div>
+				<div class="form-group">
+					<label for="image">Image URL</label>
+					<input class="form-control" id="image" type="url" name="image" placeholder="https://..." required>
+				</div>
+				<div class="form-group">
+					<label for="cuisine">Cuisine</label>
+					<input class="form-control" id="cuisine" type="text" name="cuisine" placeholder="e.g. Italian, Thai, Mexican" required>
+				</div>
+				<div class="form-group">
+					<label for="priceRange">Price Range</label>
+					<select class="form-control" id="priceRange" name="priceRange">
+						<option value="$">$ - Budget</option>
+						<option value="$$">$$ - Moderate</option>
+						<option value="$$$">$$$ - Upscale</option>
+						<option value="$$$$">$$$$ - Fine Dining</option>
+					</select>
+				</div>
+				<div class="form-group">
+					<label for="description">Description</label>
+					<textarea class="form-control" id="description" name="description" rows="4" placeholder="What makes this place special?" required></textarea>
+				</div>
+				<button class="btn btn-primary btn-block" type="submit">Add Restaurant</button>
+			</form>
+			<a href="/restaurants" class="d-block text-center mt-3">Go Back</a>
+		</div>
+	</div>
+</div>
+
+<%- include("../partials/footer") %>
