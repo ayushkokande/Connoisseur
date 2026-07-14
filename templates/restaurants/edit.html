@@ -1,0 +1,39 @@
+{{define "content"}}
+{{$restaurant := .Data.Restaurant}}
+<div class="container">
+	<div class="row justify-content-center">
+		<div class="col-md-6">
+			<h1 class="text-center my-4">Edit {{$restaurant.Name}}</h1>
+			<form action="/restaurants/{{$restaurant.ID.Hex}}?_method=PUT" method="POST">
+				<div class="form-group">
+					<label for="name">Name</label>
+					<input class="form-control" id="name" type="text" name="name" value="{{$restaurant.Name}}" required>
+				</div>
+				<div class="form-group">
+					<label for="image">Image URL</label>
+					<input class="form-control" id="image" type="url" name="image" value="{{$restaurant.Image}}" required>
+				</div>
+				<div class="form-group">
+					<label for="cuisine">Cuisine</label>
+					<input class="form-control" id="cuisine" type="text" name="cuisine" value="{{$restaurant.Cuisine}}" required>
+				</div>
+				<div class="form-group">
+					<label for="priceRange">Price Range</label>
+					<select class="form-control" id="priceRange" name="priceRange">
+						<option value="$" {{if eq $restaurant.PriceRange "$"}}selected{{end}}>$ - Budget</option>
+						<option value="$$" {{if eq $restaurant.PriceRange "$$"}}selected{{end}}>$$ - Moderate</option>
+						<option value="$$$" {{if eq $restaurant.PriceRange "$$$"}}selected{{end}}>$$$ - Upscale</option>
+						<option value="$$$$" {{if eq $restaurant.PriceRange "$$$$"}}selected{{end}}>$$$$ - Fine Dining</option>
+					</select>
+				</div>
+				<div class="form-group">
+					<label for="description">Description</label>
+					<textarea class="form-control" id="description" name="description" rows="4" required>{{$restaurant.Description}}</textarea>
+				</div>
+				<button class="btn btn-primary btn-block" type="submit">Save Changes</button>
+			</form>
+			<a href="/restaurants/{{$restaurant.ID.Hex}}" class="d-block text-center mt-3">Go Back</a>
+		</div>
+	</div>
+</div>
+{{end}}
