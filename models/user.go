@@ -20,8 +20,11 @@ var (
 	ErrInvalidCredentials = errors.New("username or password is incorrect")
 )
 
-// RegisterUser hashes the password and creates the user.
+// RegisterUser validates the credentials, hashes the password and creates the user.
 func RegisterUser(ctx context.Context, username, password string) (*User, error) {
+	if err := validateCredentials(username, password); err != nil {
+		return nil, err
+	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		return nil, err

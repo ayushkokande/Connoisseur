@@ -40,9 +40,8 @@ func commentsCreate(w http.ResponseWriter, r *http.Request) {
 		Username: user.Username,
 	})
 	if err != nil {
-		log.Printf("creating comment: %v", err)
-		flash(w, r, "error", "Something went wrong adding your review.")
-		http.Redirect(w, r, "/restaurants/"+restaurant.ID.Hex(), http.StatusFound)
+		flashFailure(w, r, err, "creating comment", "Something went wrong adding your review.")
+		http.Redirect(w, r, "/restaurants/"+restaurant.ID.Hex()+"/comments/new", http.StatusFound)
 		return
 	}
 	if err := models.AddCommentToRestaurant(r.Context(), restaurant.ID, comment.ID); err != nil {
@@ -79,8 +78,7 @@ func commentsUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := models.UpdateCommentText(r.Context(), commentID, r.PostFormValue("text")); err != nil {
-		log.Printf("updating comment: %v", err)
-		flash(w, r, "error", "Something went wrong updating your review.")
+		flashFailure(w, r, err, "updating comment", "Something went wrong updating your review.")
 		redirectBack(w, r)
 		return
 	}

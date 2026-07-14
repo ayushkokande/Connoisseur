@@ -46,21 +46,51 @@ go run .
 
 The app runs at [http://localhost:3000](http://localhost:3000) and connects to `mongodb://localhost:27017` (database `connoisseur`) by default.
 
-Optional environment variables:
+Environment variables:
 
 | Variable | Purpose | Default |
 | --- | --- | --- |
 | `DATABASE_URL` | MongoDB connection string | `mongodb://localhost:27017` |
 | `DATABASE_NAME` | MongoDB database name | `connoisseur` |
-| `SESSION_SECRET` | Secret used to sign session cookies | dev-only fallback |
+| `SESSION_SECRET` | Key used to sign session cookies | random per run in development; **required** in production |
+| `CSRF_SECRET` | Key used to sign CSRF tokens | random per run in development; **required** in production |
+| `APP_ENV` | Set to `production` to require the secrets above and mark cookies `Secure` | unset |
 | `PORT` | Port the server listens on | `3000` |
 | `SEED_DB` | Set to `true` to reset and seed the database on startup | unset |
+
+In development the two secrets are generated randomly at startup, which logs
+everyone out on restart but means no known key is ever baked into the source. In
+production the server refuses to start without them.
+
+`APP_ENV=production` also marks the session and CSRF cookies `Secure`, so they
+are only sent over HTTPS — do not set it when serving plain HTTP or logging in
+will silently fail.
 
 ### Run the tests
 
 ```sh
 go test ./...
 ```
+
+The handler tests are integration tests: they need a MongoDB reachable at
+`TEST_DATABASE_URL` (default `mongodb://localhost:27017`) and they wipe the
+`connoisseur_test` database. They skip rather than fail when no MongoDB is
+available.
+
+## Security
+
+* Passwords are hashed with bcrypt; the 72-byte bcrypt input limit is enforced
+  at registration rather than silently truncating.
+* All state-changing requests require a CSRF token, submitted as a hidden field
+  in every form.
+* Session cookies are `HttpOnly`, `SameSite=Lax`, `Secure` in production, and
+  expire after a week. Logging in clears any prior session state; logging out
+  expires the cookie.
+* Logout is a POST, so it cannot be triggered by a cross-site link.
+* User input is validated in the model layer: username shape and length,
+  password length, field lengths, an allowlisted price range, and image URLs
+  restricted to absolute `http`/`https` (which rejects `javascript:` and
+  `data:` URLs).
 
 ## Project Structure
 
@@ -72,14 +102,16 @@ Connoisseur/
 │   ├── db.go           # Collection handles and indexes
 │   ├── restaurant.go   # Restaurant model (name, image, cuisine, price range, ...)
 │   ├── comment.go      # Review model
-│   └── user.go         # User model (bcrypt registration/authentication)
+│   ├── user.go         # User model (bcrypt registration/authentication)
+│   └── validate.go     # Input validation rules
 ├── web/
-│   ├── routes.go       # Route table
+│   ├── routes.go       # Route table, CSRF protection
 │   ├── restaurants.go  # RESTful restaurant handlers
 │   ├── comments.go     # Nested review handlers
 │   ├── auth.go         # Landing, register, login, logout
 │   ├── middleware.go   # Auth & ownership middleware, method override
 │   ├── session.go      # Cookie sessions, current user, flash messages
+│   ├── errors.go       # Error-to-flash mapping
 │   └── render.go       # Template parsing and rendering helpers
 ├── templates/          # html/template views
 └── public/             # Static assets (stylesheets)
@@ -116,11 +148,11 @@ Connoisseur/
 | `/` | GET | Landing page |
 | `/register` | GET / POST | Sign-up form and handler |
 | `/login` | GET / POST | Login form and handler |
-| `/logout` | GET | Log out |
+| `/logout` | POST | Log out |
 
 \* requires login &nbsp;&nbsp; \** requires login and ownership
 
-HTML forms submit PUT/DELETE via a `_method` override parameter, mirroring the classic method-override pattern.
+HTML forms submit PUT/DELETE via a `_method` override parameter, mirroring the classic method-override pattern. Every non-GET request carries a CSRF token.
 
 ## Built with
 
@@ -137,6 +169,7 @@ HTML forms submit PUT/DELETE via a `_method` override parameter, mirroring the c
 * [mongoDB](https://www.mongodb.com/)
 * [mongo-go-driver](https://github.com/mongodb/mongo-go-driver)
 * [gorilla/sessions](https://github.com/gorilla/sessions)
+* [gorilla/csrf](https://github.com/gorilla/csrf)
 * [x/crypto/bcrypt](https://pkg.go.dev/golang.org/x/crypto/bcrypt)
 
 ## License

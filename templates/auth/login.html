@@ -4,6 +4,7 @@
 		<div class="col-md-5">
 			<h1 class="text-center my-4">Log In to Connoisseur</h1>
 			<form action="/login" method="POST">
+				{{$.CSRFField}}
 				<div class="form-group">
 					<label for="username">Username</label>
 					<input class="form-control" id="username" type="text" name="username" required>

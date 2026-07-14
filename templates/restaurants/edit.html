@@ -5,6 +5,7 @@
 		<div class="col-md-6">
 			<h1 class="text-center my-4">Edit {{$restaurant.Name}}</h1>
 			<form action="/restaurants/{{$restaurant.ID.Hex}}?_method=PUT" method="POST">
+				{{$.CSRFField}}
 				<div class="form-group">
 					<label for="name">Name</label>
 					<input class="form-control" id="name" type="text" name="name" value="{{$restaurant.Name}}" required>

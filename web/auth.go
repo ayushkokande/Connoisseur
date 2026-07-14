@@ -24,8 +24,7 @@ func register(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, models.ErrUsernameTaken) {
 			flash(w, r, "error", err.Error())
 		} else {
-			log.Printf("register error: %v", err)
-			flash(w, r, "error", "Something went wrong creating your account.")
+			flashFailure(w, r, err, "register", "Something went wrong creating your account.")
 		}
 		http.Redirect(w, r, "/register", http.StatusFound)
 		return

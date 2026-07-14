@@ -48,9 +48,8 @@ func restaurantsCreate(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 	if err := models.CreateRestaurant(r.Context(), restaurant); err != nil {
-		log.Printf("creating restaurant: %v", err)
-		flash(w, r, "error", "Something went wrong creating the restaurant.")
-		http.Redirect(w, r, "/restaurants", http.StatusFound)
+		flashFailure(w, r, err, "creating restaurant", "Something went wrong creating the restaurant.")
+		http.Redirect(w, r, "/restaurants/new", http.StatusFound)
 		return
 	}
 	flash(w, r, "success", "Restaurant added successfully!")
@@ -97,17 +96,16 @@ func restaurantsUpdate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	fields := bson.M{
-		"name":        r.PostFormValue("name"),
-		"image":       r.PostFormValue("image"),
-		"cuisine":     r.PostFormValue("cuisine"),
-		"priceRange":  r.PostFormValue("priceRange"),
-		"description": r.PostFormValue("description"),
+	updated := &models.Restaurant{
+		Name:        r.PostFormValue("name"),
+		Image:       r.PostFormValue("image"),
+		Cuisine:     r.PostFormValue("cuisine"),
+		PriceRange:  r.PostFormValue("priceRange"),
+		Description: r.PostFormValue("description"),
 	}
-	if err := models.UpdateRestaurant(r.Context(), id, fields); err != nil {
-		log.Printf("updating restaurant: %v", err)
-		flash(w, r, "error", "Something went wrong updating the restaurant.")
-		http.Redirect(w, r, "/restaurants", http.StatusFound)
+	if err := models.UpdateRestaurant(r.Context(), id, updated); err != nil {
+		flashFailure(w, r, err, "updating restaurant", "Something went wrong updating the restaurant.")
+		http.Redirect(w, r, "/restaurants/"+id.Hex()+"/edit", http.StatusFound)
 		return
 	}
 	flash(w, r, "success", "Restaurant updated!")

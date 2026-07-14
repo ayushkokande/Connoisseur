@@ -26,6 +26,9 @@ type Restaurant struct {
 }
 
 func CreateRestaurant(ctx context.Context, r *Restaurant) error {
+	if err := r.Validate(); err != nil {
+		return err
+	}
 	r.ID = bson.NewObjectID()
 	r.CreatedAt = time.Now()
 	if r.Comments == nil {
@@ -55,7 +58,19 @@ func FindRestaurantByID(ctx context.Context, id bson.ObjectID) (*Restaurant, err
 	return &r, nil
 }
 
-func UpdateRestaurant(ctx context.Context, id bson.ObjectID, fields bson.M) error {
+// UpdateRestaurant validates and writes the user-editable fields of r. Author,
+// createdAt and the comment list are deliberately not touched.
+func UpdateRestaurant(ctx context.Context, id bson.ObjectID, r *Restaurant) error {
+	if err := r.Validate(); err != nil {
+		return err
+	}
+	fields := bson.M{
+		"name":        r.Name,
+		"image":       r.Image,
+		"cuisine":     r.Cuisine,
+		"priceRange":  r.PriceRange,
+		"description": r.Description,
+	}
 	_, err := restaurants.UpdateOne(ctx, bson.M{"_id": id}, bson.M{"$set": fields})
 	return err
 }

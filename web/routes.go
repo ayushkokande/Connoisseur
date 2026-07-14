@@ -1,9 +1,16 @@
 package web
 
-import "net/http"
+import (
+	"log"
+	"net/http"
 
-// Routes builds the application handler, including method override and static files.
-func Routes(publicDir string) http.Handler {
+	"github.com/gorilla/csrf"
+)
+
+// Routes builds the application handler, including CSRF protection, method
+// override and static files. secureCookies must be false when serving plain
+// HTTP locally, otherwise the CSRF cookie is never sent back by the browser.
+func Routes(publicDir, csrfSecret string, secureCookies bool) http.Handler {
 	mux := http.NewServeMux()
 
 	// Auth
@@ -12,7 +19,7 @@ func Routes(publicDir string) http.Handler {
 	mux.HandleFunc("POST /register", register)
 	mux.HandleFunc("GET /login", loginForm)
 	mux.HandleFunc("POST /login", login)
-	mux.HandleFunc("GET /logout", logout)
+	mux.HandleFunc("POST /logout", logout)
 
 	// Restaurants
 	mux.HandleFunc("GET /restaurants", restaurantsIndex)
@@ -38,5 +45,37 @@ func Routes(publicDir string) http.Handler {
 		http.Error(w, "Error 404 - Page not found...", http.StatusNotFound)
 	})
 
-	return MethodOverride(mux)
+	// MethodOverride runs inside CSRF protection: the override turns a POST into
+	// a PUT/DELETE, and every one of those is a state-changing method that CSRF
+	// checks anyway, so the token is required either way.
+	protect := csrf.Protect(
+		[]byte(csrfSecret),
+		csrf.Secure(secureCookies),
+		csrf.Path("/"),
+		csrf.SameSite(csrf.SameSiteLaxMode),
+		csrf.ErrorHandler(http.HandlerFunc(csrfFailed)),
+	)
+
+	var handler http.Handler = protect(MethodOverride(mux))
+	if !secureCookies {
+		handler = markPlaintext(handler)
+	}
+	return handler
+}
+
+// markPlaintext tells gorilla/csrf that requests arrive over plain HTTP. Without
+// it the library assumes HTTPS and rejects the http:// Origin header the browser
+// sends, so every form submission fails in local development.
+func markPlaintext(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(w, csrf.PlaintextHTTPRequest(r))
+	})
+}
+
+// csrfFailed replaces the default bare 403 with a flash + redirect, which is
+// what a user hitting a stale form actually needs.
+func csrfFailed(w http.ResponseWriter, r *http.Request) {
+	log.Printf("CSRF rejected %s %s: %v", r.Method, r.URL.Path, csrf.FailureReason(r))
+	flash(w, r, "error", "Your session expired or the form was invalid. Please try again.")
+	redirectBack(w, r)
 }

@@ -10,17 +10,24 @@ import (
 	"github.com/shivamdubey91/connoisseur/models"
 )
 
-const sessionName = "connoisseur"
+const (
+	sessionName   = "connoisseur"
+	sessionMaxAge = 7 * 24 * 60 * 60 // one week, in seconds
+)
 
 var store *sessions.CookieStore
 
-// InitSessions configures the cookie session store.
-func InitSessions(secret string) {
+// InitSessions configures the cookie session store. When secure is true the
+// session cookie is only sent over HTTPS, so it must be false for plain-HTTP
+// local development or no session will ever reach the server.
+func InitSessions(secret string, secure bool) {
 	store = sessions.NewCookieStore([]byte(secret))
 	store.Options = &sessions.Options{
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   secure,
 		SameSite: http.SameSiteLaxMode,
+		MaxAge:   sessionMaxAge,
 	}
 }
 
@@ -48,15 +55,22 @@ func CurrentUser(r *http.Request) *models.User {
 	return user
 }
 
+// logIn drops any pre-existing session values before recording the new user,
+// so a session handed to the browser before login cannot carry state across
+// the privilege boundary.
 func logIn(w http.ResponseWriter, r *http.Request, user *models.User) {
 	session := getSession(r)
+	clear(session.Values)
 	session.Values["userID"] = user.ID.Hex()
 	saveSession(w, r, session)
 }
 
+// logOut expires the session cookie outright rather than only dropping the
+// user ID, so nothing from the authenticated session survives.
 func logOut(w http.ResponseWriter, r *http.Request) {
 	session := getSession(r)
-	delete(session.Values, "userID")
+	clear(session.Values)
+	session.Options.MaxAge = -1
 	saveSession(w, r, session)
 }
 

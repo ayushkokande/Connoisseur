@@ -16,6 +16,10 @@ type Comment struct {
 }
 
 func CreateComment(ctx context.Context, text string, author Author) (*Comment, error) {
+	text, err := validateCommentText(text)
+	if err != nil {
+		return nil, err
+	}
 	comment := &Comment{
 		ID:        bson.NewObjectID(),
 		Text:      text,
@@ -53,7 +57,11 @@ func FindCommentsByIDs(ctx context.Context, ids []bson.ObjectID) ([]Comment, err
 }
 
 func UpdateCommentText(ctx context.Context, id bson.ObjectID, text string) error {
-	_, err := comments.UpdateOne(ctx, bson.M{"_id": id}, bson.M{"$set": bson.M{"text": text}})
+	text, err := validateCommentText(text)
+	if err != nil {
+		return err
+	}
+	_, err = comments.UpdateOne(ctx, bson.M{"_id": id}, bson.M{"$set": bson.M{"text": text}})
 	return err
 }
 

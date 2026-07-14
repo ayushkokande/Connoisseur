@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/gorilla/csrf"
+
 	"github.com/shivamdubey91/connoisseur/models"
 )
 
@@ -47,6 +49,7 @@ type viewData struct {
 	CurrentUser  *models.User
 	FlashSuccess []string
 	FlashError   []string
+	CSRFField    template.HTML
 	Data         map[string]any
 }
 
@@ -60,6 +63,7 @@ func render(w http.ResponseWriter, r *http.Request, page string, data map[string
 		CurrentUser:  CurrentUser(r),
 		FlashSuccess: popFlashes(w, r, "success"),
 		FlashError:   popFlashes(w, r, "error"),
+		CSRFField:    csrf.TemplateField(r),
 		Data:         data,
 	}
 	if err := t.ExecuteTemplate(w, "layout.html", vd); err != nil {
