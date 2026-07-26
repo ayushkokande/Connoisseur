@@ -6,18 +6,35 @@ import (
 	"github.com/gorilla/csrf"
 )
 
+// Config describes how the application handler is assembled.
+type Config struct {
+	// PublicDir is the directory static assets are served from.
+	PublicDir string
+	// CSRFSecret keys the CSRF tokens.
+	CSRFSecret string
+	// SecureCookies must be false when serving plain HTTP locally, otherwise
+	// the CSRF cookie is never sent back by the browser.
+	SecureCookies bool
+	// AuthRateLimit throttles login and registration per client address. The
+	// zero value applies DefaultAuthRateLimit.
+	AuthRateLimit RateLimit
+}
+
 // Routes builds the application handler, including CSRF protection, method
-// override and static files. secureCookies must be false when serving plain
-// HTTP locally, otherwise the CSRF cookie is never sent back by the browser.
-func Routes(publicDir, csrfSecret string, secureCookies bool) http.Handler {
+// override, auth throttling and static files.
+func Routes(cfg Config) http.Handler {
 	mux := http.NewServeMux()
+
+	// Only the submissions are throttled, not the forms: fetching a login page
+	// costs nothing to serve and is not how a password is guessed.
+	auth := newRateLimiter(cfg.AuthRateLimit)
 
 	// Auth
 	mux.HandleFunc("GET /{$}", landing)
 	mux.HandleFunc("GET /register", registerForm)
-	mux.HandleFunc("POST /register", register)
+	mux.HandleFunc("POST /register", auth.protect(register))
 	mux.HandleFunc("GET /login", loginForm)
-	mux.HandleFunc("POST /login", login)
+	mux.HandleFunc("POST /login", auth.protect(login))
 	mux.HandleFunc("POST /logout", logout)
 
 	// Restaurants
@@ -37,7 +54,7 @@ func Routes(publicDir, csrfSecret string, secureCookies bool) http.Handler {
 	mux.HandleFunc("DELETE /restaurants/{id}/comments/{comment_id}", checkCommentOwnership(commentsDelete))
 
 	// Static assets
-	mux.Handle("GET /stylesheets/", http.FileServer(http.Dir(publicDir)))
+	mux.Handle("GET /stylesheets/", http.FileServer(http.Dir(cfg.PublicDir)))
 
 	// 404 for everything else
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -48,15 +65,15 @@ func Routes(publicDir, csrfSecret string, secureCookies bool) http.Handler {
 	// a PUT/DELETE, and every one of those is a state-changing method that CSRF
 	// checks anyway, so the token is required either way.
 	protect := csrf.Protect(
-		[]byte(csrfSecret),
-		csrf.Secure(secureCookies),
+		[]byte(cfg.CSRFSecret),
+		csrf.Secure(cfg.SecureCookies),
 		csrf.Path("/"),
 		csrf.SameSite(csrf.SameSiteLaxMode),
 		csrf.ErrorHandler(http.HandlerFunc(csrfFailed)),
 	)
 
 	var handler http.Handler = protect(MethodOverride(withCurrentUser(mux)))
-	if !secureCookies {
+	if !cfg.SecureCookies {
 		handler = markPlaintext(handler)
 	}
 

@@ -62,7 +62,16 @@ func TestMain(m *testing.M) {
 		if err := InitTemplates("../templates"); err != nil {
 			panic(err)
 		}
-		server = httptest.NewServer(Routes("../public", "test-csrf-secret-32-bytes-long!!!", false))
+		server = httptest.NewServer(Routes(Config{
+			PublicDir:     "../public",
+			CSRFSecret:    "test-csrf-secret-32-bytes-long!!!",
+			SecureCookies: false,
+			// The suite registers and logs in dozens of times from one address,
+			// so the shared server gets a limit far looser than production's.
+			// The real limit is exercised by TestAuthRateLimitBlocksGuessing,
+			// which builds a server of its own.
+			AuthRateLimit: RateLimit{Every: time.Millisecond, Burst: 100000},
+		}))
 	}
 
 	code := m.Run()
@@ -92,25 +101,34 @@ func requireMongo(t *testing.T) {
 
 var csrfPattern = regexp.MustCompile(`name="gorilla\.csrf\.Token" value="([^"]+)"`)
 
-// browser is an HTTP client with a cookie jar, standing in for one logged-in user.
+// browser is an HTTP client with a cookie jar, standing in for one logged-in
+// user of the server at base.
 type browser struct {
 	t      *testing.T
 	client *http.Client
+	base   string
 }
 
 func newBrowser(t *testing.T) *browser {
+	t.Helper()
+	return newBrowserAt(t, server.URL)
+}
+
+// newBrowserAt points a browser at a server other than the shared one, for
+// tests that need a differently configured handler.
+func newBrowserAt(t *testing.T, base string) *browser {
 	t.Helper()
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &browser{t: t, client: &http.Client{Jar: jar}}
+	return &browser{t: t, client: &http.Client{Jar: jar}, base: base}
 }
 
 // get fetches a page and returns its body and the CSRF token embedded in it.
 func (b *browser) get(path string) (string, string) {
 	b.t.Helper()
-	resp, err := b.client.Get(server.URL + path)
+	resp, err := b.client.Get(b.base + path)
 	if err != nil {
 		b.t.Fatalf("GET %s: %v", path, err)
 	}
@@ -128,7 +146,7 @@ func (b *browser) get(path string) (string, string) {
 // sends the user rather than only where they end up.
 func (b *browser) noRedirects() *browser {
 	b.t.Helper()
-	return &browser{t: b.t, client: &http.Client{
+	return &browser{t: b.t, base: b.base, client: &http.Client{
 		Jar:           b.client.Jar,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}}
@@ -138,7 +156,7 @@ func (b *browser) noRedirects() *browser {
 // interested in the status or headers rather than the body.
 func (b *browser) getResponse(path string) *http.Response {
 	b.t.Helper()
-	resp, err := b.client.Get(server.URL + path)
+	resp, err := b.client.Get(b.base + path)
 	if err != nil {
 		b.t.Fatalf("GET %s: %v", path, err)
 	}
@@ -162,13 +180,13 @@ func (b *browser) post(tokenPage, action string, form url.Values) *http.Response
 // on a form submission, which the CSRF layer also checks.
 func (b *browser) postRaw(action string, form url.Values) *http.Response {
 	b.t.Helper()
-	req, err := http.NewRequest(http.MethodPost, server.URL+action, strings.NewReader(form.Encode()))
+	req, err := http.NewRequest(http.MethodPost, b.base+action, strings.NewReader(form.Encode()))
 	if err != nil {
 		b.t.Fatal(err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Referer", server.URL+"/")
-	req.Header.Set("Origin", server.URL)
+	req.Header.Set("Referer", b.base+"/")
+	req.Header.Set("Origin", b.base)
 
 	resp, err := b.client.Do(req)
 	if err != nil {

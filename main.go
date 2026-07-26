@@ -107,8 +107,12 @@ func main() {
 
 	port := env("PORT", "3000")
 	server := &http.Server{
-		Addr:         ":" + port,
-		Handler:      web.Routes("public", csrfSecret, production),
+		Addr: ":" + port,
+		Handler: web.Routes(web.Config{
+			PublicDir:     "public",
+			CSRFSecret:    csrfSecret,
+			SecureCookies: production,
+		}),
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 20 * time.Second,
 		IdleTimeout:  60 * time.Second,
