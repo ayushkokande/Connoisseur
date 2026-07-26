@@ -11,12 +11,13 @@
 	</header>
 
 	<form class="filter-bar form-row align-items-end mb-3" method="GET" action="/restaurants">
-		<div class="col-lg-4 col-md-6 mb-2">
+		{{/* The large-screen widths total twelve so the bar stays on one row. */}}
+		<div class="col-lg-3 col-md-6 mb-2">
 			<label class="small text-muted mb-1" for="filter-q">Search</label>
 			<input class="form-control" type="search" id="filter-q" name="q"
 				value="{{.Data.Query.Search}}" placeholder="Name, cuisine or description">
 		</div>
-		<div class="col-lg-3 col-md-6 mb-2">
+		<div class="col-lg-2 col-md-6 mb-2">
 			<label class="small text-muted mb-1" for="filter-cuisine">Cuisine</label>
 			<select class="form-control" id="filter-cuisine" name="cuisine">
 				<option value="">Any cuisine</option>
@@ -31,6 +32,15 @@
 				<option value="">Any price</option>
 				{{range .Data.PriceRanges}}
 					<option value="{{.}}" {{if eq $.Data.Query.PriceRange .}}selected{{end}}>{{.}}</option>
+				{{end}}
+			</select>
+		</div>
+		<div class="col-lg-2 col-md-4 mb-2">
+			<label class="small text-muted mb-1" for="filter-rating">Rating</label>
+			<select class="form-control" id="filter-rating" name="rating">
+				<option value="">Any rating</option>
+				{{range .Data.RatingChoices}}
+					<option value="{{.}}" {{if eq $.Data.Query.MinRating .}}selected{{end}}>{{.}}+ stars</option>
 				{{end}}
 			</select>
 		</div>
@@ -80,8 +90,16 @@
 					<img class="card-img-top restaurant-thumb" src="{{.Image}}" alt="{{.Name}}">
 					<div class="card-body d-flex flex-column">
 						<h5 class="card-title">{{.Name}}</h5>
-						<p class="card-text text-muted mb-2">
+						<p class="card-text text-muted mb-1">
 							{{.Cuisine}} &middot; {{.PriceRange}}
+						</p>
+						<p class="card-text small mb-2">
+							{{if .IsRated}}
+								<span class="rating-stars">{{.Stars}}</span>
+								<span class="text-muted">{{.DisplayRating}} ({{.ReviewCount}})</span>
+							{{else}}
+								<span class="text-muted">Not yet rated</span>
+							{{end}}
 						</p>
 						<a href="/restaurants/{{.ID.Hex}}" class="btn btn-outline-primary mt-auto">More Info</a>
 					</div>

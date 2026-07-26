@@ -2,6 +2,7 @@ package web
 
 import (
 	"net/http"
+	"strconv"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 
@@ -13,7 +14,10 @@ func commentsNewForm(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	render(w, r, "comments/new", map[string]any{"Restaurant": restaurant})
+	render(w, r, "comments/new", map[string]any{
+		"Restaurant":    restaurant,
+		"RatingChoices": models.RatingChoices(),
+	})
 }
 
 func commentsCreate(w http.ResponseWriter, r *http.Request) {
@@ -22,24 +26,29 @@ func commentsCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user := CurrentUser(r)
-	comment, err := models.CreateComment(r.Context(), r.PostFormValue("text"), models.Author{
-		ID:       user.ID,
-		Username: user.Username,
-	})
+	_, err := models.CreateComment(r.Context(),
+		restaurant.ID,
+		ratingValue(r.PostFormValue("rating")),
+		r.PostFormValue("text"),
+		models.Author{ID: user.ID, Username: user.Username},
+	)
 	if err != nil {
 		flashFailure(w, r, err, "creating comment", "Something went wrong adding your review.")
 		http.Redirect(w, r, "/restaurants/"+restaurant.ID.Hex()+"/comments/new", http.StatusFound)
 		return
 	}
-	if err := models.AddCommentToRestaurant(r.Context(), restaurant.ID, comment.ID); err != nil {
-		logger(r).Error("linking comment to restaurant",
-			"restaurant_id", restaurant.ID.Hex(),
-			"comment_id", comment.ID.Hex(),
-			"error", err,
-		)
-	}
 	flash(w, r, "success", "Review added!")
 	http.Redirect(w, r, "/restaurants/"+restaurant.ID.Hex(), http.StatusFound)
+}
+
+// ratingValue parses a submitted star rating. Anything unparseable becomes 0,
+// which the model layer rejects with a message the user can act on.
+func ratingValue(raw string) int {
+	rating, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0
+	}
+	return rating
 }
 
 func commentsEditForm(w http.ResponseWriter, r *http.Request) {
@@ -51,8 +60,9 @@ func commentsEditForm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	render(w, r, "comments/edit", map[string]any{
-		"RestaurantID": r.PathValue("id"),
-		"Comment":      comment,
+		"RestaurantID":  r.PathValue("id"),
+		"Comment":       comment,
+		"RatingChoices": models.RatingChoices(),
 	})
 }
 
@@ -63,7 +73,8 @@ func commentsUpdate(w http.ResponseWriter, r *http.Request) {
 		redirectBack(w, r)
 		return
 	}
-	if err := models.UpdateCommentText(r.Context(), commentID, r.PostFormValue("text")); err != nil {
+	rating := ratingValue(r.PostFormValue("rating"))
+	if err := models.UpdateComment(r.Context(), commentID, rating, r.PostFormValue("text")); err != nil {
 		flashFailure(w, r, err, "updating comment", "Something went wrong updating your review.")
 		redirectBack(w, r)
 		return
@@ -84,16 +95,6 @@ func commentsDelete(w http.ResponseWriter, r *http.Request) {
 		flash(w, r, "error", "Something went wrong deleting your review.")
 		redirectBack(w, r)
 		return
-	}
-	restaurantOID, err := bson.ObjectIDFromHex(r.PathValue("id"))
-	if err == nil {
-		if err := models.RemoveCommentFromRestaurant(r.Context(), restaurantOID, commentID); err != nil {
-			logger(r).Error("unlinking comment from restaurant",
-				"restaurant_id", restaurantOID.Hex(),
-				"comment_id", commentID.Hex(),
-				"error", err,
-			)
-		}
 	}
 	flash(w, r, "success", "Review deleted!")
 	http.Redirect(w, r, "/restaurants/"+r.PathValue("id"), http.StatusFound)

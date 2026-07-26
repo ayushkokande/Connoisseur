@@ -16,6 +16,7 @@ var templates = map[string]*template.Template{}
 
 var funcMap = template.FuncMap{
 	"fromNow": fromNow,
+	"stars":   models.Stars,
 	"year":    func() int { return time.Now().Year() },
 }
 

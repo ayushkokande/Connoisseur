@@ -4,6 +4,8 @@ import (
 	"context"
 	"log/slog"
 
+	"go.mongodb.org/mongo-driver/v2/bson"
+
 	"github.com/ayushkokande/Connoisseur/models"
 )
 
@@ -38,6 +40,31 @@ var seedData = []models.Restaurant{
 	},
 }
 
+// seedReviews are attached to each seeded restaurant in turn, so the sample
+// data exercises ratings and averages rather than showing every listing as
+// unrated.
+var seedReviews = [][]struct {
+	Rating int
+	Text   string
+}{
+	{
+		{5, "The tagliatelle al ragù is worth the trip on its own."},
+		{4, "Lovely room and attentive service, though the wine list is pricey."},
+	},
+	{
+		{5, "Best omakase in the city. Book weeks ahead."},
+		{5, "Every course was a surprise. Sit at the counter."},
+		{3, "Excellent fish, but the seats are cramped."},
+	},
+	{
+		{4, "Al pastor straight off the trompo. Bring cash."},
+	},
+	{
+		{5, "A genuinely memorable tasting menu."},
+		{2, "Beautiful plates, tiny portions, eye-watering bill."},
+	},
+}
+
 func seedDB() {
 	ctx := context.Background()
 
@@ -51,11 +78,21 @@ func seedDB() {
 	}
 	slog.Info("seed: cleared existing restaurants and comments")
 
-	for _, seed := range seedData {
+	critic := models.Author{ID: bson.NewObjectID(), Username: "connoisseur"}
+
+	for i, seed := range seedData {
 		restaurant := seed
 		if err := models.CreateRestaurant(ctx, &restaurant); err != nil {
 			slog.Error("seed: creating restaurant", "name", restaurant.Name, "error", err)
 			continue
+		}
+
+		if i < len(seedReviews) {
+			for _, review := range seedReviews[i] {
+				if _, err := models.CreateComment(ctx, restaurant.ID, review.Rating, review.Text, critic); err != nil {
+					slog.Error("seed: creating review", "restaurant", restaurant.Name, "error", err)
+				}
+			}
 		}
 		slog.Info("seed: added restaurant", "name", restaurant.Name)
 	}

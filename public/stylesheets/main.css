@@ -11,6 +11,12 @@
 	object-fit: cover;
 }
 
+.rating-stars {
+	color: #f0ad4e;
+	letter-spacing: 0.05em;
+	white-space: nowrap;
+}
+
 .filter-bar {
 	background-color: #f8f9fa;
 	border: 1px solid #dee2e6;

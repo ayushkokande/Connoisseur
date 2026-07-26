@@ -20,11 +20,15 @@
 
   * Restaurant details include cuisine type, price range, and photos
 
+  * Reviews carry a one to five star rating, and each restaurant shows its
+    average and review count
+
 * Browse the directory:
 
   * Free text search across name, cuisine and description
 
-  * Filter by cuisine and price range, sort by newest, oldest or name
+  * Filter by cuisine, price range and minimum rating; sort by newest, oldest,
+    name or top rated
 
   * Paginated results with shareable, filter-preserving URLs
 
@@ -173,7 +177,8 @@ Connoisseur/
 │   ├── db.go           # Collection handles, indexes, health ping
 │   ├── query.go        # Restaurant search, filtering, sorting and pagination
 │   ├── restaurant.go   # Restaurant model (name, image, cuisine, price range, ...)
-│   ├── comment.go      # Review model
+│   ├── comment.go      # Review model (text plus a 1-5 star rating)
+│   ├── migrate.go      # Idempotent startup migration of pre-existing data
 │   ├── user.go         # User model (bcrypt registration/authentication)
 │   └── validate.go     # Input validation rules
 ├── web/
@@ -241,7 +246,8 @@ The index accepts these query parameters, all optional:
 | `q` | Free text search over name, cuisine and description | any text, up to 100 characters |
 | `cuisine` | Exact cuisine match | any cuisine present in the data |
 | `price` | Exact price range match | `$`, `$$`, `$$$`, `$$$$` |
-| `sort` | Result order | `newest` (default), `oldest`, `name` |
+| `rating` | Minimum average rating | `1` to `5` |
+| `sort` | Result order | `newest` (default), `rating`, `oldest`, `name` |
 | `page` | 1-based page number | defaults to `1`, clamped to the last page |
 
 Unrecognized values are ignored rather than rejected, so a stale bookmark still
@@ -250,6 +256,32 @@ work; the term is escaped before it reaches MongoDB, so regex metacharacters are
 matched literally.
 
 HTML forms submit PUT/DELETE via a `_method` override parameter, mirroring the classic method-override pattern. Every non-GET request carries a CSRF token.
+
+## Ratings
+
+Every review carries a rating from one to five stars. A restaurant document
+keeps a `reviewCount` and `avgRating` alongside its own fields, which is what
+lets the index sort by rating and filter by a minimum without joining to the
+reviews on every page load.
+
+Those two fields are derived data, and they are recomputed from the reviews
+themselves after each write rather than adjusted in place. Recomputing costs one
+extra query per review, and in exchange a write that fails partway leaves the
+summary stale rather than permanently wrong: the next review, or a rerun of the
+migration, puts it right. Transactions would be the usual answer, but they
+require a replica set, and this runs happily against a standalone `mongod`.
+
+Reviews reference their restaurant rather than the restaurant holding an array
+of review IDs. Adding a review is therefore a single insert that cannot
+half-succeed.
+
+Both of these differ from how the data used to be stored, so `models.Migrate`
+runs at startup, unrolling the old arrays onto the reviews, discarding reviews
+whose restaurant no longer exists, and computing summaries that were never
+there. It is idempotent and a no-op once applied, so it is safe on every boot.
+Reviews written before ratings existed keep a rating of `0`: they still count as
+reviews and still display, but they are left out of the average, and a
+restaurant with nothing but those reads as "Not yet rated".
 
 ## Built with
 

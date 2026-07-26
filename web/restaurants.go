@@ -45,6 +45,7 @@ func restaurantsIndex(w http.ResponseWriter, r *http.Request) {
 		Search:     params.Get("q"),
 		Cuisine:    params.Get("cuisine"),
 		PriceRange: params.Get("price"),
+		MinRating:  ratingValue(params.Get("rating")),
 		Sort:       params.Get("sort"),
 		Page:       pageNumber(params.Get("page")),
 	}
@@ -65,15 +66,16 @@ func restaurantsIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	render(w, r, "restaurants/index", map[string]any{
-		"Results":     results,
-		"Query":       query,
-		"Cuisines":    cuisines,
-		"PriceRanges": models.PriceRanges(),
-		"SortOptions": sortOptions,
-		"DefaultSort": models.SortNewest,
-		"Pages":       pageLinks(query, results),
-		"PrevURL":     adjacentPageURL(query, results, -1),
-		"NextURL":     adjacentPageURL(query, results, 1),
+		"Results":       results,
+		"Query":         query,
+		"Cuisines":      cuisines,
+		"PriceRanges":   models.PriceRanges(),
+		"RatingChoices": models.RatingChoices(),
+		"SortOptions":   sortOptions,
+		"DefaultSort":   models.SortNewest,
+		"Pages":         pageLinks(query, results),
+		"PrevURL":       adjacentPageURL(query, results, -1),
+		"NextURL":       adjacentPageURL(query, results, 1),
 	})
 }
 
@@ -108,7 +110,7 @@ func restaurantsShow(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	comments, err := models.FindCommentsByIDs(r.Context(), restaurant.Comments)
+	comments, err := models.FindCommentsByRestaurant(r.Context(), restaurant.ID)
 	if err != nil {
 		logger(r).Error("loading comments", "restaurant_id", restaurant.ID.Hex(), "error", err)
 	}
@@ -158,7 +160,7 @@ func restaurantsDelete(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/restaurants", http.StatusFound)
 		return
 	}
-	if err := models.DeleteComments(r.Context(), restaurant.Comments); err != nil {
+	if err := models.DeleteCommentsByRestaurant(r.Context(), restaurant.ID); err != nil {
 		logger(r).Error("deleting restaurant comments",
 			"restaurant_id", restaurant.ID.Hex(),
 			"error", err,

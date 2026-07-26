@@ -7,6 +7,15 @@
 			<form action="/restaurants/{{$restaurant.ID.Hex}}/comments" method="POST">
 				{{$.CSRFField}}
 				<div class="form-group">
+					<label for="rating">Your Rating</label>
+					<select class="form-control" id="rating" name="rating" required>
+						<option value="" disabled selected>Choose a rating</option>
+						{{range .Data.RatingChoices}}
+							<option value="{{.}}">{{stars .}} &mdash; {{.}} out of 5</option>
+						{{end}}
+					</select>
+				</div>
+				<div class="form-group">
 					<label for="text">Your Review</label>
 					<textarea class="form-control" id="text" name="text" rows="4" placeholder="How was your experience?" required></textarea>
 				</div>

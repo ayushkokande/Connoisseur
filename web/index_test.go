@@ -3,6 +3,9 @@ package web
 import (
 	"context"
 	"fmt"
+	"html"
+	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -38,6 +41,25 @@ func seedRestaurants(t *testing.T, specs ...models.Restaurant) {
 // cardCount counts rendered restaurant cards on an index page.
 func cardCount(body string) int {
 	return strings.Count(body, "More Info")
+}
+
+var pageTwoPattern = regexp.MustCompile(`href="(/restaurants\?[^"]*page=2[^"]*)"`)
+
+// pageTwoLink returns the parsed pagination link to page 2. Query parameters
+// come out in whatever order url.Values.Encode produces, so tests inspect the
+// parsed values rather than matching the raw string.
+func pageTwoLink(t *testing.T, body string) *url.URL {
+	t.Helper()
+
+	match := pageTwoPattern.FindStringSubmatch(body)
+	if match == nil {
+		t.Fatal("no pagination link to page 2 was rendered")
+	}
+	link, err := url.Parse(html.UnescapeString(match[1]))
+	if err != nil {
+		t.Fatalf("parsing page 2 link: %v", err)
+	}
+	return link
 }
 
 func TestIndexSearchMatchesNameCuisineAndDescription(t *testing.T) {
@@ -255,8 +277,8 @@ func TestPaginationLinksKeepFilters(t *testing.T) {
 	seedRestaurants(t, specs...)
 
 	body, _ := newBrowser(t).get("/restaurants?cuisine=Japanese")
-	if !strings.Contains(body, "cuisine=Japanese&amp;page=2") {
-		t.Error("pagination links dropped the cuisine filter")
+	if got := pageTwoLink(t, body).Query().Get("cuisine"); got != "Japanese" {
+		t.Errorf("page 2 link carries cuisine=%q, want Japanese", got)
 	}
 
 	secondPage, _ := newBrowser(t).get("/restaurants?cuisine=Japanese&page=2")

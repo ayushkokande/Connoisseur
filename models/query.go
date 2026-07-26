@@ -16,6 +16,7 @@ const (
 	SortNewest = "newest"
 	SortOldest = "oldest"
 	SortName   = "name"
+	SortRating = "rating"
 )
 
 const (
@@ -32,9 +33,12 @@ type RestaurantQuery struct {
 	Search     string
 	Cuisine    string
 	PriceRange string
-	Sort       string
-	Page       int
-	PerPage    int
+	// MinRating keeps only restaurants averaging at least this many stars.
+	// Zero means no rating filter.
+	MinRating int
+	Sort      string
+	Page      int
+	PerPage   int
 }
 
 // Normalize clamps user-supplied values to something the query layer can
@@ -52,7 +56,10 @@ func (q *RestaurantQuery) Normalize() {
 	if !isValidPriceRange(q.PriceRange) {
 		q.PriceRange = ""
 	}
-	if !slices.Contains([]string{SortNewest, SortOldest, SortName}, q.Sort) {
+	if q.MinRating < minRating || q.MinRating > maxRating {
+		q.MinRating = 0
+	}
+	if !slices.Contains([]string{SortNewest, SortOldest, SortName, SortRating}, q.Sort) {
 		q.Sort = SortNewest
 	}
 	if q.Page < 1 {
@@ -66,7 +73,7 @@ func (q *RestaurantQuery) Normalize() {
 // IsFiltered reports whether anything narrows the result set, which lets the
 // UI tell "nothing matched your search" apart from "nothing here yet".
 func (q RestaurantQuery) IsFiltered() bool {
-	return q.Search != "" || q.Cuisine != "" || q.PriceRange != ""
+	return q.Search != "" || q.Cuisine != "" || q.PriceRange != "" || q.MinRating > 0
 }
 
 func (q RestaurantQuery) filter() bson.M {
@@ -91,6 +98,9 @@ func (q RestaurantQuery) filter() bson.M {
 	if q.PriceRange != "" {
 		filter["priceRange"] = q.PriceRange
 	}
+	if q.MinRating > 0 {
+		filter["avgRating"] = bson.M{"$gte": q.MinRating}
+	}
 	return filter
 }
 
@@ -104,6 +114,14 @@ func (q RestaurantQuery) sortOrder() bson.D {
 		return bson.D{{Key: "createdAt", Value: 1}, {Key: "_id", Value: 1}}
 	case SortName:
 		return bson.D{{Key: "name", Value: 1}, {Key: "_id", Value: 1}}
+	case SortRating:
+		// Review count breaks ties so that a single five-star review does not
+		// outrank a restaurant with fifty of them.
+		return bson.D{
+			{Key: "avgRating", Value: -1},
+			{Key: "reviewCount", Value: -1},
+			{Key: "_id", Value: -1},
+		}
 	default:
 		return bson.D{{Key: "createdAt", Value: -1}, {Key: "_id", Value: -1}}
 	}

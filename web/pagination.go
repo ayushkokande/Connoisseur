@@ -17,6 +17,7 @@ var sortOptions = []struct {
 	Label string
 }{
 	{models.SortNewest, "Newest first"},
+	{models.SortRating, "Top rated"},
 	{models.SortOldest, "Oldest first"},
 	{models.SortName, "Name (A–Z)"},
 }
@@ -51,6 +52,9 @@ func restaurantsURL(query models.RestaurantQuery, page int) string {
 	}
 	if query.PriceRange != "" {
 		values.Set("price", query.PriceRange)
+	}
+	if query.MinRating > 0 {
+		values.Set("rating", strconv.Itoa(query.MinRating))
 	}
 	if query.Sort != "" && query.Sort != models.SortNewest {
 		values.Set("sort", query.Sort)

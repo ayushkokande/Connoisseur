@@ -18,6 +18,16 @@
 						<span class="text-muted h5">{{$restaurant.PriceRange}}</span>
 					</div>
 					<p class="text-muted mb-2">{{$restaurant.Cuisine}}</p>
+					<p class="mb-3">
+						{{if $restaurant.IsRated}}
+							<span class="rating-stars">{{$restaurant.Stars}}</span>
+							<span class="text-muted ml-1">
+								{{$restaurant.DisplayRating}} from {{$restaurant.ReviewCount}} review{{if ne $restaurant.ReviewCount 1}}s{{end}}
+							</span>
+						{{else}}
+							<span class="text-muted">Not yet rated</span>
+						{{end}}
+					</p>
 					<p class="card-text">{{$restaurant.Description}}</p>
 					<p class="text-muted">
 						<em>Added by {{$restaurant.Author.Username}}, {{fromNow $restaurant.CreatedAt}}</em>
@@ -36,7 +46,11 @@
 				<div class="card-body">
 					<div class="d-flex justify-content-between align-items-center mb-3">
 						<h4 class="mb-0">Reviews</h4>
-						<a class="btn btn-success" href="/restaurants/{{$restaurant.ID.Hex}}/comments/new">Add Review</a>
+						{{if $currentUser}}
+							<a class="btn btn-success" href="/restaurants/{{$restaurant.ID.Hex}}/comments/new">Add Review</a>
+						{{else}}
+							<a class="btn btn-outline-success" href="/login">Log in to review</a>
+						{{end}}
 					</div>
 					<hr>
 					{{if not .Data.Comments}}
@@ -48,6 +62,9 @@
 								<strong>{{.Author.Username}}</strong>
 								<span class="text-muted">{{fromNow .CreatedAt}}</span>
 							</div>
+							{{if .IsRated}}
+								<p class="rating-stars mb-1">{{.Stars}}</p>
+							{{end}}
 							<p class="mb-1">{{.Text}}</p>
 							{{if and $currentUser (eq .Author.ID $currentUser.ID)}}
 								<a class="btn btn-sm btn-outline-warning" href="/restaurants/{{$restaurant.ID.Hex}}/comments/{{.ID.Hex}}/edit">Edit</a>

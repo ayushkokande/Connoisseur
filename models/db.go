@@ -39,11 +39,19 @@ func Init(db *mongo.Database) error {
 
 	// These back the sort orders and filters on the restaurant index. The free
 	// text search is a substring regex and cannot use them.
-	_, err := restaurants.Indexes().CreateMany(ctx, []mongo.IndexModel{
+	if _, err := restaurants.Indexes().CreateMany(ctx, []mongo.IndexModel{
 		{Keys: bson.D{{Key: "createdAt", Value: -1}}},
 		{Keys: bson.D{{Key: "name", Value: 1}}},
 		{Keys: bson.D{{Key: "cuisine", Value: 1}}},
 		{Keys: bson.D{{Key: "priceRange", Value: 1}}},
+		{Keys: bson.D{{Key: "avgRating", Value: -1}}},
+	}); err != nil {
+		return err
+	}
+
+	// Every review read is scoped to one restaurant.
+	_, err := comments.Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys: bson.D{{Key: "restaurantId", Value: 1}, {Key: "createdAt", Value: 1}},
 	})
 	return err
 }

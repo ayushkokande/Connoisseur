@@ -90,6 +90,9 @@ func main() {
 	if err := models.Init(client.Database(databaseName)); err != nil {
 		fatal("initializing models", "error", err)
 	}
+	if err := models.Migrate(ctx); err != nil {
+		fatal("migrating data", "error", err)
+	}
 
 	// Cookies are marked Secure only in production; over plain HTTP a Secure
 	// cookie is never sent back and login would silently fail.

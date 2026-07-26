@@ -39,7 +39,37 @@ const (
 	maxDescriptionLen = 2000
 	maxImageLen       = 500
 	maxCommentLen     = 2000
+
+	minRating = 1
+	maxRating = 5
 )
+
+// RatingChoices lists the selectable star ratings, best first, which is the
+// order a rating menu conventionally reads.
+func RatingChoices() []int {
+	choices := make([]int, 0, maxRating-minRating+1)
+	for rating := maxRating; rating >= minRating; rating-- {
+		choices = append(choices, rating)
+	}
+	return choices
+}
+
+func validateRating(rating int) error {
+	if rating < minRating || rating > maxRating {
+		return invalid("Rating must be between %d and %d stars.", minRating, maxRating)
+	}
+	return nil
+}
+
+// Stars renders a rating as filled and hollow star characters. Ratings outside
+// the scale, including the 0 on reviews written before ratings existed, render
+// as no stars at all.
+func Stars(rating int) string {
+	if rating < minRating || rating > maxRating {
+		return ""
+	}
+	return strings.Repeat("★", rating) + strings.Repeat("☆", maxRating-rating)
+}
 
 var usernamePattern = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
 

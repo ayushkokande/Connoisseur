@@ -26,12 +26,16 @@ func TestTemplatesRender(t *testing.T) {
 		Description: "A test restaurant.",
 		CreatedAt:   time.Now(),
 		Author:      models.Author{ID: user.ID, Username: user.Username},
+		ReviewCount: 3,
+		AvgRating:   4.5,
 	}
 	comment := models.Comment{
-		ID:        bson.NewObjectID(),
-		Text:      "Great food!",
-		CreatedAt: time.Now(),
-		Author:    models.Author{ID: user.ID, Username: user.Username},
+		ID:           bson.NewObjectID(),
+		RestaurantID: restaurant.ID,
+		Rating:       4,
+		Text:         "Great food!",
+		CreatedAt:    time.Now(),
+		Author:       models.Author{ID: user.ID, Username: user.Username},
 	}
 
 	// A second page of results, so the pagination controls are exercised too.
@@ -50,21 +54,29 @@ func TestTemplatesRender(t *testing.T) {
 		"auth/login":    nil,
 		"auth/register": nil,
 		"restaurants/index": {
-			"Results":     indexResults,
-			"Query":       indexQuery,
-			"Cuisines":    []string{"French", "Italian"},
-			"PriceRanges": models.PriceRanges(),
-			"SortOptions": sortOptions,
-			"DefaultSort": models.SortNewest,
-			"Pages":       pageLinks(indexQuery, indexResults),
-			"PrevURL":     adjacentPageURL(indexQuery, indexResults, -1),
-			"NextURL":     adjacentPageURL(indexQuery, indexResults, 1),
+			"Results":       indexResults,
+			"Query":         indexQuery,
+			"Cuisines":      []string{"French", "Italian"},
+			"PriceRanges":   models.PriceRanges(),
+			"RatingChoices": models.RatingChoices(),
+			"SortOptions":   sortOptions,
+			"DefaultSort":   models.SortNewest,
+			"Pages":         pageLinks(indexQuery, indexResults),
+			"PrevURL":       adjacentPageURL(indexQuery, indexResults, -1),
+			"NextURL":       adjacentPageURL(indexQuery, indexResults, 1),
 		},
 		"restaurants/show": {"Restaurant": restaurant, "Comments": []models.Comment{comment}},
 		"restaurants/new":  nil,
 		"restaurants/edit": {"Restaurant": restaurant},
-		"comments/new":     {"Restaurant": restaurant},
-		"comments/edit":    {"RestaurantID": restaurant.ID.Hex(), "Comment": &comment},
+		"comments/new": {
+			"Restaurant":    restaurant,
+			"RatingChoices": models.RatingChoices(),
+		},
+		"comments/edit": {
+			"RestaurantID":  restaurant.ID.Hex(),
+			"Comment":       &comment,
+			"RatingChoices": models.RatingChoices(),
+		},
 	}
 
 	for page, data := range pageData {

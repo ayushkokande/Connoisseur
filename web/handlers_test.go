@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -216,20 +217,25 @@ func (b *browser) createRestaurant(name string) string {
 // createComment adds a review to a restaurant and returns the comment ID.
 func (b *browser) createComment(restaurantID, text string) string {
 	b.t.Helper()
+	return b.createRating(restaurantID, 4, text)
+}
+
+// createRating adds a review with an explicit star rating.
+func (b *browser) createRating(restaurantID string, rating int, text string) string {
+	b.t.Helper()
 	resp := b.post("/restaurants/"+restaurantID+"/comments/new",
 		"/restaurants/"+restaurantID+"/comments",
-		url.Values{"text": {text}})
+		url.Values{"rating": {strconv.Itoa(rating)}, "text": {text}})
 	defer resp.Body.Close()
 
-	ctx := context.Background()
-	restaurant, err := models.FindRestaurantByID(ctx, mustID(b.t, restaurantID))
+	reviews, err := models.FindCommentsByRestaurant(context.Background(), mustID(b.t, restaurantID))
 	if err != nil {
 		b.t.Fatal(err)
 	}
-	if len(restaurant.Comments) == 0 {
-		b.t.Fatalf("comment was not attached to restaurant %s", restaurantID)
+	if len(reviews) == 0 {
+		b.t.Fatalf("review was not attached to restaurant %s", restaurantID)
 	}
-	return restaurant.Comments[len(restaurant.Comments)-1].Hex()
+	return reviews[len(reviews)-1].ID.Hex()
 }
 
 func TestOwnerCanEditAndDeleteOwnRestaurant(t *testing.T) {
