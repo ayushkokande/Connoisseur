@@ -390,6 +390,49 @@ func TestNonOwnerCannotEditOrDeleteComment(t *testing.T) {
 	}
 }
 
+// A review belongs to one restaurant, and the URL naming a different one is
+// wrong however the visitor got there. Owning the review is not enough: acting
+// on it through the wrong restaurant's URL edits the review and then redirects
+// to a page it never appeared on, reporting a change the visitor cannot see.
+func TestOwnCommentCannotBeEditedThroughAnotherRestaurant(t *testing.T) {
+	requireMongo(t)
+
+	owner := newBrowser(t)
+	owner.register("owner_mismatch")
+	reviewed := owner.createRestaurant("Reviewed Bistro")
+	other := owner.createRestaurant("Unrelated Bistro")
+	commentID := owner.createComment(reviewed, "Original review text.")
+
+	// Same owner, same review, wrong restaurant in the path.
+	mismatched := "/restaurants/" + other + "/comments/" + commentID
+
+	resp := owner.post("/restaurants/"+other, mismatched+"?_method=PUT",
+		url.Values{"rating": {"1"}, "text": {"Edited through the wrong URL."}})
+	resp.Body.Close()
+
+	comment, err := models.FindCommentByID(context.Background(), mustID(t, commentID))
+	if err != nil {
+		t.Fatalf("comment should still exist: %v", err)
+	}
+	if comment.Text != "Original review text." {
+		t.Errorf("the review was edited through another restaurant's URL: text is now %q", comment.Text)
+	}
+
+	// The edit form is refused for the same reason.
+	body, _ := owner.get(mismatched + "/edit")
+	if strings.Contains(body, "Edited through the wrong URL.") ||
+		strings.Contains(body, "Original review text.") {
+		t.Error("the review edit form was served under another restaurant's URL")
+	}
+
+	resp = owner.post("/restaurants/"+other, mismatched+"?_method=DELETE", url.Values{})
+	resp.Body.Close()
+
+	if _, err := models.FindCommentByID(context.Background(), mustID(t, commentID)); err != nil {
+		t.Error("the review was deleted through another restaurant's URL")
+	}
+}
+
 func TestAnonymousCannotCreateRestaurant(t *testing.T) {
 	requireMongo(t)
 
