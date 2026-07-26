@@ -3,14 +3,78 @@
 	<header class="jumbotron py-4">
 		<h1>Welcome to Connoisseur!</h1>
 		<p>Browse restaurants reviewed by our community, or add your own.</p>
-		<a class="btn btn-primary btn-lg" href="/restaurants/new">Add New Restaurant</a>
+		{{if .CurrentUser}}
+			<a class="btn btn-primary btn-lg" href="/restaurants/new">Add New Restaurant</a>
+		{{else}}
+			<a class="btn btn-primary btn-lg" href="/login">Log in to add a restaurant</a>
+		{{end}}
 	</header>
 
-	<div class="row">
-		{{if not .Data.Restaurants}}
-			<div class="col-12"><p class="text-muted">No restaurants yet. Be the first to add one!</p></div>
+	<form class="filter-bar form-row align-items-end mb-3" method="GET" action="/restaurants">
+		<div class="col-lg-4 col-md-6 mb-2">
+			<label class="small text-muted mb-1" for="filter-q">Search</label>
+			<input class="form-control" type="search" id="filter-q" name="q"
+				value="{{.Data.Query.Search}}" placeholder="Name, cuisine or description">
+		</div>
+		<div class="col-lg-3 col-md-6 mb-2">
+			<label class="small text-muted mb-1" for="filter-cuisine">Cuisine</label>
+			<select class="form-control" id="filter-cuisine" name="cuisine">
+				<option value="">Any cuisine</option>
+				{{range .Data.Cuisines}}
+					<option value="{{.}}" {{if eq $.Data.Query.Cuisine .}}selected{{end}}>{{.}}</option>
+				{{end}}
+			</select>
+		</div>
+		<div class="col-lg-2 col-md-4 mb-2">
+			<label class="small text-muted mb-1" for="filter-price">Price</label>
+			<select class="form-control" id="filter-price" name="price">
+				<option value="">Any price</option>
+				{{range .Data.PriceRanges}}
+					<option value="{{.}}" {{if eq $.Data.Query.PriceRange .}}selected{{end}}>{{.}}</option>
+				{{end}}
+			</select>
+		</div>
+		<div class="col-lg-2 col-md-4 mb-2">
+			<label class="small text-muted mb-1" for="filter-sort">Sort by</label>
+			<select class="form-control" id="filter-sort" name="sort">
+				{{range .Data.SortOptions}}
+					<option value="{{.Value}}" {{if eq $.Data.Query.Sort .Value}}selected{{end}}>{{.Label}}</option>
+				{{end}}
+			</select>
+		</div>
+		<div class="col-lg-1 col-md-4 mb-2">
+			<button class="btn btn-primary btn-block" type="submit">Apply</button>
+		</div>
+	</form>
+
+	<div class="d-flex justify-content-between align-items-center mb-3">
+		<p class="text-muted mb-0">
+			{{with .Data.Results}}
+				{{if .Total}}
+					Showing {{len .Restaurants}} of {{.Total}} restaurant{{if ne .Total 1}}s{{end}}
+					{{if gt .TotalPages 1}}&middot; page {{.Page}} of {{.TotalPages}}{{end}}
+				{{end}}
+			{{end}}
+		</p>
+		{{/* The empty state offers its own reset, so only show this one alongside results. */}}
+		{{if and .Data.Query.IsFiltered .Data.Results.Restaurants}}
+			<a class="small" href="/restaurants">Clear filters</a>
 		{{end}}
-		{{range .Data.Restaurants}}
+	</div>
+
+	{{if not .Data.Results.Restaurants}}
+		<div class="alert alert-light border text-center py-5">
+			{{if .Data.Query.IsFiltered}}
+				<p class="mb-1">No restaurants match those filters.</p>
+				<a href="/restaurants">Clear filters</a> and start over.
+			{{else}}
+				<p class="mb-0 text-muted">No restaurants yet. Be the first to add one!</p>
+			{{end}}
+		</div>
+	{{end}}
+
+	<div class="row">
+		{{range .Data.Results.Restaurants}}
 			<div class="col-md-4 col-sm-6 mb-4">
 				<div class="card h-100">
 					<img class="card-img-top restaurant-thumb" src="{{.Image}}" alt="{{.Name}}">
@@ -25,5 +89,49 @@
 			</div>
 		{{end}}
 	</div>
+
+	{{if .Data.Pages}}
+		<nav aria-label="Restaurant pages">
+			<ul class="pagination justify-content-center">
+				<li class="page-item {{if not .Data.PrevURL}}disabled{{end}}">
+					{{if .Data.PrevURL}}
+						<a class="page-link" href="{{.Data.PrevURL}}" rel="prev">Previous</a>
+					{{else}}
+						<span class="page-link">Previous</span>
+					{{end}}
+				</li>
+				{{range .Data.Pages}}
+					<li class="page-item {{if .Current}}active{{end}}">
+						{{if .Current}}
+							<span class="page-link">{{.Number}}</span>
+						{{else}}
+							<a class="page-link" href="{{.URL}}">{{.Number}}</a>
+						{{end}}
+					</li>
+				{{end}}
+				<li class="page-item {{if not .Data.NextURL}}disabled{{end}}">
+					{{if .Data.NextURL}}
+						<a class="page-link" href="{{.Data.NextURL}}" rel="next">Next</a>
+					{{else}}
+						<span class="page-link">Next</span>
+					{{end}}
+				</li>
+			</ul>
+		</nav>
+	{{end}}
 </div>
+
+<script>
+	// Progressive enhancement: a GET form submits every field, so without this
+	// a plain search produces /restaurants?q=pasta&cuisine=&price=&sort=newest.
+	// Disabled fields are left out, which keeps shared URLs to what was actually
+	// chosen. The page works the same with scripting off, just with longer URLs.
+	document.querySelector(".filter-bar").addEventListener("submit", function () {
+		this.querySelectorAll("input, select").forEach(function (field) {
+			if (field.value === "" || (field.name === "sort" && field.value === "{{.Data.DefaultSort}}")) {
+				field.disabled = true;
+			}
+		});
+	});
+</script>
 {{end}}

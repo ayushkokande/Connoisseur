@@ -5,7 +5,7 @@ import (
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 
-	"github.com/shivamdubey91/connoisseur/models"
+	"github.com/ayushkokande/Connoisseur/models"
 )
 
 // MethodOverride rewrites POST requests carrying a _method parameter
@@ -19,6 +19,7 @@ func MethodOverride(next http.Handler) http.Handler {
 			}
 			if override == http.MethodPut || override == http.MethodDelete {
 				r.Method = override
+				setRoutedMethod(r, override)
 			}
 		}
 		next.ServeHTTP(w, r)
@@ -70,7 +71,7 @@ func checkRestaurantOwnership(next http.HandlerFunc) http.HandlerFunc {
 			redirectBack(w, r)
 			return
 		}
-		next(w, r)
+		next(w, withRestaurant(r, restaurant))
 	}
 }
 
@@ -99,6 +100,6 @@ func checkCommentOwnership(next http.HandlerFunc) http.HandlerFunc {
 			redirectBack(w, r)
 			return
 		}
-		next(w, r)
+		next(w, withComment(r, comment))
 	}
 }

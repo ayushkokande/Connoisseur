@@ -1,13 +1,12 @@
 package web
 
 import (
-	"log"
 	"net/http"
 
 	"github.com/gorilla/sessions"
 	"go.mongodb.org/mongo-driver/v2/bson"
 
-	"github.com/shivamdubey91/connoisseur/models"
+	"github.com/ayushkokande/Connoisseur/models"
 )
 
 const (
@@ -37,8 +36,18 @@ func getSession(r *http.Request) *sessions.Session {
 	return session
 }
 
-// CurrentUser returns the logged-in user, or nil.
+// CurrentUser returns the logged-in user for this request, or nil. The database
+// is consulted at most once per request; later calls reuse that result.
 func CurrentUser(r *http.Request) *models.User {
+	if resolver, ok := r.Context().Value(currentUserKey).(*currentUserResolver); ok {
+		return resolver.get(r)
+	}
+	// No withCurrentUser in the chain, so fall back to looking the user up
+	// directly rather than reporting them as anonymous.
+	return lookupUser(r)
+}
+
+func lookupUser(r *http.Request) *models.User {
 	session := getSession(r)
 	hex, ok := session.Values["userID"].(string)
 	if !ok {
@@ -98,6 +107,6 @@ func popFlashes(w http.ResponseWriter, r *http.Request, category string) []strin
 
 func saveSession(w http.ResponseWriter, r *http.Request, session *sessions.Session) {
 	if err := session.Save(r, w); err != nil {
-		log.Printf("session save error: %v", err)
+		logger(r).Error("saving session", "error", err)
 	}
 }

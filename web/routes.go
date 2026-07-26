@@ -1,7 +1,6 @@
 package web
 
 import (
-	"log"
 	"net/http"
 
 	"github.com/gorilla/csrf"
@@ -56,11 +55,18 @@ func Routes(publicDir, csrfSecret string, secureCookies bool) http.Handler {
 		csrf.ErrorHandler(http.HandlerFunc(csrfFailed)),
 	)
 
-	var handler http.Handler = protect(MethodOverride(mux))
+	var handler http.Handler = protect(MethodOverride(withCurrentUser(mux)))
 	if !secureCookies {
 		handler = markPlaintext(handler)
 	}
-	return handler
+
+	// The health check sits outside CSRF protection so that a probe polling it
+	// every few seconds is not handed a fresh CSRF cookie each time.
+	root := http.NewServeMux()
+	root.HandleFunc("GET "+healthPath, healthz)
+	root.Handle("/", handler)
+
+	return RequestLogger(root)
 }
 
 // markPlaintext tells gorilla/csrf that requests arrive over plain HTTP. Without
@@ -75,7 +81,11 @@ func markPlaintext(next http.Handler) http.Handler {
 // csrfFailed replaces the default bare 403 with a flash + redirect, which is
 // what a user hitting a stale form actually needs.
 func csrfFailed(w http.ResponseWriter, r *http.Request) {
-	log.Printf("CSRF rejected %s %s: %v", r.Method, r.URL.Path, csrf.FailureReason(r))
+	logger(r).Warn("csrf rejected",
+		"method", r.Method,
+		"path", r.URL.Path,
+		"reason", csrf.FailureReason(r),
+	)
 	flash(w, r, "error", "Your session expired or the form was invalid. Please try again.")
 	redirectBack(w, r)
 }

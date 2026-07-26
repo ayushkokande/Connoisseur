@@ -5,7 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -15,8 +15,8 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 
-	"github.com/shivamdubey91/connoisseur/models"
-	"github.com/shivamdubey91/connoisseur/web"
+	"github.com/ayushkokande/Connoisseur/models"
+	"github.com/ayushkokande/Connoisseur/web"
 )
 
 func env(key, fallback string) string {
@@ -24,6 +24,26 @@ func env(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// fatal logs a final error and exits, since slog has no Fatal equivalent.
+func fatal(msg string, args ...any) {
+	slog.Error(msg, args...)
+	os.Exit(1)
+}
+
+// newLogger emits JSON in production so a log collector can parse it, and
+// human-readable text everywhere else.
+func newLogger(production bool) *slog.Logger {
+	var level slog.Level
+	if err := level.UnmarshalText([]byte(env("LOG_LEVEL", "info"))); err != nil {
+		level = slog.LevelInfo
+	}
+	opts := &slog.HandlerOptions{Level: level}
+	if production {
+		return slog.New(slog.NewJSONHandler(os.Stdout, opts))
+	}
+	return slog.New(slog.NewTextHandler(os.Stdout, opts))
 }
 
 // secret returns the named secret. In production it must be supplied; in
@@ -34,18 +54,20 @@ func secret(key string, production bool) string {
 		return v
 	}
 	if production {
-		log.Fatalf("ERROR: %s must be set when APP_ENV=production", key)
+		fatal("secret must be set when APP_ENV=production", "variable", key)
 	}
 	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {
-		log.Fatalf("ERROR: generating development %s: %v", key, err)
+		fatal("generating development secret", "variable", key, "error", err)
 	}
-	log.Printf("WARNING: %s is unset; generated a random development key", key)
+	slog.Warn("secret is unset; generated a random development key", "variable", key)
 	return hex.EncodeToString(buf)
 }
 
 func main() {
 	production := os.Getenv("APP_ENV") == "production"
+	slog.SetDefault(newLogger(production))
+
 	databaseURL := env("DATABASE_URL", "mongodb://localhost:27017")
 	databaseName := env("DATABASE_NAME", "connoisseur")
 
@@ -54,26 +76,26 @@ func main() {
 
 	client, err := mongo.Connect(options.Client().ApplyURI(databaseURL))
 	if err != nil {
-		log.Fatalf("ERROR: %v", err)
+		fatal("configuring MongoDB client", "error", err)
 	}
 	defer client.Disconnect(context.Background())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := client.Ping(ctx, nil); err != nil {
-		log.Fatalf("ERROR: could not reach MongoDB: %v", err)
+		fatal("could not reach MongoDB", "error", err)
 	}
-	log.Println("Successfully connected to the Connoisseur database!")
+	slog.Info("connected to the Connoisseur database", "database", databaseName)
 
 	if err := models.Init(client.Database(databaseName)); err != nil {
-		log.Fatalf("ERROR: initializing models: %v", err)
+		fatal("initializing models", "error", err)
 	}
 
 	// Cookies are marked Secure only in production; over plain HTTP a Secure
 	// cookie is never sent back and login would silently fail.
 	web.InitSessions(sessionSecret, production)
 	if err := web.InitTemplates("templates"); err != nil {
-		log.Fatalf("ERROR: %v", err)
+		fatal("parsing templates", "error", err)
 	}
 
 	if os.Getenv("SEED_DB") == "true" {
@@ -93,17 +115,17 @@ func main() {
 	signal.Notify(shutdown, os.Interrupt, syscall.SIGTERM)
 
 	go func() {
-		log.Println("Connoisseur server has started and is listening on port: " + port)
+		slog.Info("server listening", "port", port, "production", production)
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("ERROR: %v", err)
+			fatal("server stopped unexpectedly", "error", err)
 		}
 	}()
 
 	<-shutdown
-	log.Println("Shutting down...")
+	slog.Info("shutting down")
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer stopCancel()
 	if err := server.Shutdown(stopCtx); err != nil {
-		log.Printf("ERROR: forced shutdown: %v", err)
+		slog.Error("forced shutdown", "error", err)
 	}
 }

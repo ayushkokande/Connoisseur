@@ -38,18 +38,6 @@ func CreateRestaurant(ctx context.Context, r *Restaurant) error {
 	return err
 }
 
-func FindAllRestaurants(ctx context.Context) ([]Restaurant, error) {
-	cursor, err := restaurants.Find(ctx, bson.M{})
-	if err != nil {
-		return nil, err
-	}
-	var results []Restaurant
-	if err := cursor.All(ctx, &results); err != nil {
-		return nil, err
-	}
-	return results, nil
-}
-
 func FindRestaurantByID(ctx context.Context, id bson.ObjectID) (*Restaurant, error) {
 	var r Restaurant
 	if err := restaurants.FindOne(ctx, bson.M{"_id": id}).Decode(&r); err != nil {

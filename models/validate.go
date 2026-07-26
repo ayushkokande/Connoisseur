@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode/utf8"
 )
@@ -40,10 +41,20 @@ const (
 	maxCommentLen     = 2000
 )
 
-var (
-	usernamePattern = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
-	validPriceRange = map[string]bool{"$": true, "$$": true, "$$$": true, "$$$$": true}
-)
+var usernamePattern = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
+
+// priceRanges is the allowlist of price ranges, cheapest first. The order is
+// also the order they appear in the filter menu.
+var priceRanges = []string{"$", "$$", "$$$", "$$$$"}
+
+// PriceRanges returns the allowed price ranges, cheapest first.
+func PriceRanges() []string {
+	return slices.Clone(priceRanges)
+}
+
+func isValidPriceRange(value string) bool {
+	return slices.Contains(priceRanges, value)
+}
 
 func validateCredentials(username, password string) error {
 	if n := utf8.RuneCountInString(username); n < minUsernameLen || n > maxUsernameLen {
@@ -86,7 +97,7 @@ func (r *Restaurant) Validate() error {
 	if err := validateImageURL(r.Image); err != nil {
 		return err
 	}
-	if !validPriceRange[r.PriceRange] {
+	if !isValidPriceRange(r.PriceRange) {
 		return invalid("Price range must be one of $, $$, $$$ or $$$$.")
 	}
 	return nil

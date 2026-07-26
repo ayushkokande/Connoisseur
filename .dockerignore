@@ -1,0 +1,16 @@
+.git
+.github
+.gitignore
+.dockerignore
+Dockerfile
+docker-compose.yml
+
+.DS_Store
+**/.DS_Store
+
+connoisseur
+*.exe
+
+LICENSE
+readme.md
+_config.yml

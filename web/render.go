@@ -3,14 +3,13 @@ package web
 import (
 	"fmt"
 	"html/template"
-	"log"
 	"net/http"
 	"path/filepath"
 	"time"
 
 	"github.com/gorilla/csrf"
 
-	"github.com/shivamdubey91/connoisseur/models"
+	"github.com/ayushkokande/Connoisseur/models"
 )
 
 var templates = map[string]*template.Template{}
@@ -67,7 +66,7 @@ func render(w http.ResponseWriter, r *http.Request, page string, data map[string
 		Data:         data,
 	}
 	if err := t.ExecuteTemplate(w, "layout.html", vd); err != nil {
-		log.Printf("render %q: %v", page, err)
+		logger(r).Error("rendering page", "page", page, "error", err)
 	}
 }
 

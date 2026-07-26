@@ -2,10 +2,9 @@ package web
 
 import (
 	"errors"
-	"log"
 	"net/http"
 
-	"github.com/shivamdubey91/connoisseur/models"
+	"github.com/ayushkokande/Connoisseur/models"
 )
 
 func landing(w http.ResponseWriter, r *http.Request) {
@@ -44,7 +43,7 @@ func login(w http.ResponseWriter, r *http.Request) {
 	user, err := models.AuthenticateUser(r.Context(), username, password)
 	if err != nil {
 		if !errors.Is(err, models.ErrInvalidCredentials) {
-			log.Printf("login error: %v", err)
+			logger(r).Error("authenticating user", "error", err)
 		}
 		flash(w, r, "error", "Username or password is incorrect.")
 		http.Redirect(w, r, "/login", http.StatusFound)

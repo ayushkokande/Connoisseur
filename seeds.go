@@ -2,9 +2,9 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
 
-	"github.com/shivamdubey91/connoisseur/models"
+	"github.com/ayushkokande/Connoisseur/models"
 )
 
 var seedData = []models.Restaurant{
@@ -42,22 +42,21 @@ func seedDB() {
 	ctx := context.Background()
 
 	if err := models.DeleteAllRestaurants(ctx); err != nil {
-		log.Println(err)
+		slog.Error("seed: deleting restaurants", "error", err)
 		return
 	}
-	log.Println("Deleted all restaurants from the database!")
-
 	if err := models.DeleteAllComments(ctx); err != nil {
-		log.Println(err)
+		slog.Error("seed: deleting comments", "error", err)
 		return
 	}
+	slog.Info("seed: cleared existing restaurants and comments")
 
 	for _, seed := range seedData {
 		restaurant := seed
 		if err := models.CreateRestaurant(ctx, &restaurant); err != nil {
-			log.Println(err)
+			slog.Error("seed: creating restaurant", "name", restaurant.Name, "error", err)
 			continue
 		}
-		log.Println("Added seed restaurant: " + restaurant.Name)
+		slog.Info("seed: added restaurant", "name", restaurant.Name)
 	}
 }

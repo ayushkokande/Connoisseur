@@ -1,15 +1,15 @@
-module github.com/shivamdubey91/connoisseur
+module github.com/ayushkokande/Connoisseur
 
 go 1.25.5
 
 require (
+	github.com/gorilla/csrf v1.7.3
 	github.com/gorilla/sessions v1.4.0
 	go.mongodb.org/mongo-driver/v2 v2.8.0
 	golang.org/x/crypto v0.54.0
 )
 
 require (
-	github.com/gorilla/csrf v1.7.3 // indirect
 	github.com/gorilla/securecookie v1.1.2 // indirect
 	github.com/klauspost/compress v1.17.6 // indirect
 	github.com/xdg-go/pbkdf2 v1.0.0 // indirect

@@ -2,6 +2,8 @@ package web
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -16,7 +18,7 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 
-	"github.com/shivamdubey91/connoisseur/models"
+	"github.com/ayushkokande/Connoisseur/models"
 )
 
 // These are integration tests: they need a MongoDB reachable at TEST_DATABASE_URL
@@ -30,6 +32,10 @@ var (
 )
 
 func TestMain(m *testing.M) {
+	// Request logging would otherwise interleave a line per request into the
+	// test output; failures report what they need themselves.
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+
 	uri := os.Getenv("TEST_DATABASE_URL")
 	if uri == "" {
 		uri = "mongodb://localhost:27017"
@@ -149,6 +155,16 @@ func mustID(t *testing.T, hex string) bson.ObjectID {
 		t.Fatalf("not a valid object ID: %q", hex)
 	}
 	return id
+}
+
+// countRestaurants reports how many restaurants exist, regardless of paging.
+func countRestaurants(t *testing.T) int64 {
+	t.Helper()
+	page, err := models.FindRestaurants(context.Background(), models.RestaurantQuery{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return page.Total
 }
 
 func readAll(t *testing.T, resp *http.Response) string {
@@ -340,12 +356,8 @@ func TestAnonymousCannotCreateRestaurant(t *testing.T) {
 	if resp.Request.URL.Path != "/login" {
 		t.Errorf("anonymous create was not redirected to /login, landed on %s", resp.Request.URL.Path)
 	}
-	all, err := models.FindAllRestaurants(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(all) != 0 {
-		t.Errorf("anonymous visitor created %d restaurant(s)", len(all))
+	if n := countRestaurants(t); n != 0 {
+		t.Errorf("anonymous visitor created %d restaurant(s)", n)
 	}
 }
 
@@ -386,11 +398,7 @@ func TestRestaurantValidationRejectsBadInput(t *testing.T) {
 			resp := owner.post("/restaurants/new", "/restaurants", tc.form)
 			resp.Body.Close()
 
-			all, err := models.FindAllRestaurants(context.Background())
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(all) != 0 {
+			if countRestaurants(t) != 0 {
 				t.Errorf("invalid restaurant (%s) was saved", tc.name)
 			}
 		})

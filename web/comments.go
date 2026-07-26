@@ -1,37 +1,24 @@
 package web
 
 import (
-	"log"
 	"net/http"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 
-	"github.com/shivamdubey91/connoisseur/models"
+	"github.com/ayushkokande/Connoisseur/models"
 )
 
 func commentsNewForm(w http.ResponseWriter, r *http.Request) {
-	id, ok := restaurantID(w, r)
+	restaurant, ok := loadRestaurant(w, r)
 	if !ok {
-		return
-	}
-	restaurant, err := models.FindRestaurantByID(r.Context(), id)
-	if err != nil {
-		flash(w, r, "error", "Restaurant not found!")
-		http.Redirect(w, r, "/restaurants", http.StatusFound)
 		return
 	}
 	render(w, r, "comments/new", map[string]any{"Restaurant": restaurant})
 }
 
 func commentsCreate(w http.ResponseWriter, r *http.Request) {
-	id, ok := restaurantID(w, r)
+	restaurant, ok := loadRestaurant(w, r)
 	if !ok {
-		return
-	}
-	restaurant, err := models.FindRestaurantByID(r.Context(), id)
-	if err != nil {
-		flash(w, r, "error", "Restaurant not found!")
-		http.Redirect(w, r, "/restaurants", http.StatusFound)
 		return
 	}
 	user := CurrentUser(r)
@@ -45,21 +32,20 @@ func commentsCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := models.AddCommentToRestaurant(r.Context(), restaurant.ID, comment.ID); err != nil {
-		log.Printf("linking comment: %v", err)
+		logger(r).Error("linking comment to restaurant",
+			"restaurant_id", restaurant.ID.Hex(),
+			"comment_id", comment.ID.Hex(),
+			"error", err,
+		)
 	}
 	flash(w, r, "success", "Review added!")
 	http.Redirect(w, r, "/restaurants/"+restaurant.ID.Hex(), http.StatusFound)
 }
 
 func commentsEditForm(w http.ResponseWriter, r *http.Request) {
-	commentID, err := bson.ObjectIDFromHex(r.PathValue("comment_id"))
-	if err != nil {
-		flash(w, r, "error", "Review not found!")
-		redirectBack(w, r)
-		return
-	}
-	comment, err := models.FindCommentByID(r.Context(), commentID)
-	if err != nil {
+	// The ownership middleware has already read this comment.
+	comment, ok := commentFromContext(r)
+	if !ok {
 		flash(w, r, "error", "Review not found!")
 		redirectBack(w, r)
 		return
@@ -94,7 +80,7 @@ func commentsDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := models.DeleteComment(r.Context(), commentID); err != nil {
-		log.Printf("deleting comment: %v", err)
+		logger(r).Error("deleting comment", "comment_id", commentID.Hex(), "error", err)
 		flash(w, r, "error", "Something went wrong deleting your review.")
 		redirectBack(w, r)
 		return
@@ -102,7 +88,11 @@ func commentsDelete(w http.ResponseWriter, r *http.Request) {
 	restaurantOID, err := bson.ObjectIDFromHex(r.PathValue("id"))
 	if err == nil {
 		if err := models.RemoveCommentFromRestaurant(r.Context(), restaurantOID, commentID); err != nil {
-			log.Printf("unlinking comment: %v", err)
+			logger(r).Error("unlinking comment from restaurant",
+				"restaurant_id", restaurantOID.Hex(),
+				"comment_id", commentID.Hex(),
+				"error", err,
+			)
 		}
 	}
 	flash(w, r, "success", "Review deleted!")
