@@ -1,0 +1,38 @@
+services:
+  mongo:
+    image: mongo:8
+    restart: unless-stopped
+    volumes:
+      - mongo-data:/data/db
+    # Port 27017 is deliberately not published, so this stack does not collide
+    # with a MongoDB already running on the host. Uncomment to connect from it.
+    # ports:
+    #   - "27017:27017"
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  app:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      DATABASE_URL: mongodb://mongo:27017
+      DATABASE_NAME: ${DATABASE_NAME:-connoisseur}
+      APP_ENV: ${APP_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Unset in development, where the app generates throwaway keys on boot.
+      # Both are required once APP_ENV=production.
+      SESSION_SECRET: ${SESSION_SECRET:-}
+      CSRF_SECRET: ${CSRF_SECRET:-}
+      SEED_DB: ${SEED_DB:-false}
+    depends_on:
+      mongo:
+        condition: service_healthy
+
+volumes:
+  mongo-data:

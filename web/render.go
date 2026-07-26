@@ -1,22 +1,23 @@
 package web
 
 import (
+	"bytes"
 	"fmt"
 	"html/template"
-	"log"
 	"net/http"
 	"path/filepath"
 	"time"
 
 	"github.com/gorilla/csrf"
 
-	"github.com/shivamdubey91/connoisseur/models"
+	"github.com/ayushkokande/Connoisseur/models"
 )
 
 var templates = map[string]*template.Template{}
 
 var funcMap = template.FuncMap{
 	"fromNow": fromNow,
+	"stars":   models.Stars,
 	"year":    func() int { return time.Now().Year() },
 }
 
@@ -66,8 +67,21 @@ func render(w http.ResponseWriter, r *http.Request, page string, data map[string
 		CSRFField:    csrf.TemplateField(r),
 		Data:         data,
 	}
-	if err := t.ExecuteTemplate(w, "layout.html", vd); err != nil {
-		log.Printf("render %q: %v", page, err)
+	// Rendered into a buffer first: executing straight into the ResponseWriter
+	// commits a 200 and part of the page before a failure partway through can be
+	// noticed, leaving the visitor with markup that stops mid-tag and no
+	// indication anything went wrong.
+	var rendered bytes.Buffer
+	if err := t.ExecuteTemplate(&rendered, "layout.html", vd); err != nil {
+		logger(r).Error("rendering page", "page", page, "error", err)
+		http.Error(w, "Something went wrong rendering this page.", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if _, err := rendered.WriteTo(w); err != nil {
+		// The client went away mid-response; there is nothing left to say to it.
+		logger(r).Warn("writing rendered page", "page", page, "error", err)
 	}
 }
 

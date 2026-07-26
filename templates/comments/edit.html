@@ -8,6 +8,16 @@
 			<form action="/restaurants/{{$restaurantID}}/comments/{{$comment.ID.Hex}}?_method=PUT" method="POST">
 				{{$.CSRFField}}
 				<div class="form-group">
+					<label for="rating">Your Rating</label>
+					<select class="form-control" id="rating" name="rating" required>
+						{{/* Reviews written before ratings existed have none, so they start unselected. */}}
+						<option value="" disabled {{if not $comment.IsRated}}selected{{end}}>Choose a rating</option>
+						{{range .Data.RatingChoices}}
+							<option value="{{.}}" {{if eq $comment.Rating .}}selected{{end}}>{{stars .}} &mdash; {{.}} out of 5</option>
+						{{end}}
+					</select>
+				</div>
+				<div class="form-group">
 					<label for="text">Your Review</label>
 					<textarea class="form-control" id="text" name="text" rows="4" required>{{$comment.Text}}</textarea>
 				</div>

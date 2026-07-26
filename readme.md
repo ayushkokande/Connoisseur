@@ -20,6 +20,18 @@
 
   * Restaurant details include cuisine type, price range, and photos
 
+  * Reviews carry a one to five star rating, and each restaurant shows its
+    average and review count
+
+* Browse the directory:
+
+  * Free text search across name, cuisine and description
+
+  * Filter by cuisine, price range and minimum rating; sort by newest, oldest,
+    name or top rated
+
+  * Paginated results with shareable, filter-preserving URLs
+
 * Flash messages responding to user interactions
 
 * Responsive web design with Bootstrap
@@ -28,8 +40,11 @@
 
 ### Prerequisites
 
-* [Go](https://go.dev/) (1.22 or later)
+* [Go](https://go.dev/) 1.25 or later
 * [MongoDB](https://www.mongodb.com/) running locally, or a connection string to a hosted instance
+
+Alternatively, [Docker](https://www.docker.com/) alone is enough — see
+[Run with Docker](#run-with-docker).
 
 ### Clone this repository
 
@@ -46,7 +61,26 @@ go run .
 
 The app runs at [http://localhost:3000](http://localhost:3000) and connects to `mongodb://localhost:27017` (database `connoisseur`) by default.
 
-Environment variables:
+### Run with Docker
+
+`docker-compose.yml` brings up the app together with its own MongoDB, so nothing
+needs to be installed locally:
+
+```sh
+docker compose up --build
+```
+
+Add `SEED_DB=true` to start from the sample restaurants:
+
+```sh
+SEED_DB=true docker compose up --build
+```
+
+MongoDB's port is deliberately not published, so the stack will not collide with
+a MongoDB already running on the host. Data persists in the `mongo-data` volume;
+`docker compose down -v` discards it.
+
+### Configuration
 
 | Variable | Purpose | Default |
 | --- | --- | --- |
@@ -54,7 +88,8 @@ Environment variables:
 | `DATABASE_NAME` | MongoDB database name | `connoisseur` |
 | `SESSION_SECRET` | Key used to sign session cookies | random per run in development; **required** in production |
 | `CSRF_SECRET` | Key used to sign CSRF tokens | random per run in development; **required** in production |
-| `APP_ENV` | Set to `production` to require the secrets above and mark cookies `Secure` | unset |
+| `APP_ENV` | Set to `production` to require the secrets above, mark cookies `Secure` and emit JSON logs | unset |
+| `LOG_LEVEL` | `debug`, `info`, `warn` or `error` | `info` |
 | `PORT` | Port the server listens on | `3000` |
 | `SEED_DB` | Set to `true` to reset and seed the database on startup | unset |
 
@@ -74,8 +109,46 @@ go test ./...
 
 The handler tests are integration tests: they need a MongoDB reachable at
 `TEST_DATABASE_URL` (default `mongodb://localhost:27017`) and they wipe the
-`connoisseur_test` database. They skip rather than fail when no MongoDB is
-available.
+`connoisseur_test` database. They **skip rather than fail** when no MongoDB is
+available, so a green run without one has not exercised them. If you do not have
+MongoDB installed, start a throwaway instance first:
+
+```sh
+docker run -d --name connoisseur-test-mongo -p 27017:27017 mongo:8
+```
+
+GitHub Actions runs `gofmt`, `go vet`, `go test -race` against a MongoDB service
+container, and builds the Docker image on every push and pull request. See
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+
+## Operations
+
+### Health checks
+
+`GET /healthz` pings MongoDB and answers with JSON:
+
+```json
+{"status":"ok","database":"ok"}
+```
+
+It returns `200` while the database is reachable and `503` when it is not, so a
+load balancer or orchestrator can pull the instance out of rotation. The
+endpoint sits outside CSRF protection, so probes are not handed a cookie on
+every poll. The Docker image wires it into a `HEALTHCHECK`.
+
+### Logging
+
+Logs are structured via `log/slog` — human-readable text in development, JSON
+when `APP_ENV=production`:
+
+```
+time=2026-07-26T20:32:23.671Z level=INFO msg=request request_id=6263cf74 method=GET path=/restaurants status=200 bytes=4085 duration_ms=1
+```
+
+Every request is assigned an ID that is returned in the `X-Request-Id` response
+header and attached to each log line emitted while handling it, so a
+user-reported failure can be traced back to its logs. Successful health checks
+are not logged, to keep frequent probes from burying everything else.
 
 ## Security
 
@@ -96,12 +169,16 @@ available.
 
 ```
 Connoisseur/
-├── main.go             # App entry point: config, DB connection, server startup
+├── main.go             # App entry point: config, logging, DB connection, server startup
 ├── seeds.go            # Optional database seeder (enabled with SEED_DB=true)
+├── Dockerfile          # Multi-stage build producing a static binary image
+├── docker-compose.yml  # App plus MongoDB for local development
 ├── models/
-│   ├── db.go           # Collection handles and indexes
+│   ├── db.go           # Collection handles, indexes, health ping
+│   ├── query.go        # Restaurant search, filtering, sorting and pagination
 │   ├── restaurant.go   # Restaurant model (name, image, cuisine, price range, ...)
-│   ├── comment.go      # Review model
+│   ├── comment.go      # Review model (text plus a 1-5 star rating)
+│   ├── migrate.go      # Idempotent startup migration of pre-existing data
 │   ├── user.go         # User model (bcrypt registration/authentication)
 │   └── validate.go     # Input validation rules
 ├── web/
@@ -110,8 +187,12 @@ Connoisseur/
 │   ├── comments.go     # Nested review handlers
 │   ├── auth.go         # Landing, register, login, logout
 │   ├── middleware.go   # Auth & ownership middleware, method override
+│   ├── context.go      # Per-request user, restaurant and comment caching
+│   ├── pagination.go   # Page links and filter-preserving URLs
 │   ├── session.go      # Cookie sessions, current user, flash messages
 │   ├── errors.go       # Error-to-flash mapping
+│   ├── logging.go      # Request IDs and request logging middleware
+│   ├── health.go       # /healthz endpoint
 │   └── render.go       # Template parsing and rendering helpers
 ├── templates/          # html/template views
 └── public/             # Static assets (stylesheets)
@@ -123,7 +204,7 @@ Connoisseur/
 
 | Name | Path | Verb | Description |
 | --- | --- | --- | --- |
-| Index | `/restaurants` | GET | List all restaurants |
+| Index | `/restaurants` | GET | Search, filter and page through restaurants |
 | New | `/restaurants/new` | GET | Form to add a restaurant * |
 | Create | `/restaurants` | POST | Add a new restaurant * |
 | Show | `/restaurants/:id` | GET | Details for one restaurant |
@@ -150,9 +231,57 @@ Connoisseur/
 | `/login` | GET / POST | Login form and handler |
 | `/logout` | POST | Log out |
 
+### Operations
+
+| Path | Verb | Description |
+| --- | --- | --- |
+| `/healthz` | GET | Liveness and database reachability check |
+
 \* requires login &nbsp;&nbsp; \** requires login and ownership
 
+The index accepts these query parameters, all optional:
+
+| Parameter | Purpose | Values |
+| --- | --- | --- |
+| `q` | Free text search over name, cuisine and description | any text, up to 100 characters |
+| `cuisine` | Exact cuisine match | any cuisine present in the data |
+| `price` | Exact price range match | `$`, `$$`, `$$$`, `$$$$` |
+| `rating` | Minimum average rating | `1` to `5` |
+| `sort` | Result order | `newest` (default), `rating`, `oldest`, `name` |
+| `page` | 1-based page number | defaults to `1`, clamped to the last page |
+
+Unrecognized values are ignored rather than rejected, so a stale bookmark still
+returns results. Search is a case-insensitive substring match, so partial words
+work; the term is escaped before it reaches MongoDB, so regex metacharacters are
+matched literally.
+
 HTML forms submit PUT/DELETE via a `_method` override parameter, mirroring the classic method-override pattern. Every non-GET request carries a CSRF token.
+
+## Ratings
+
+Every review carries a rating from one to five stars. A restaurant document
+keeps a `reviewCount` and `avgRating` alongside its own fields, which is what
+lets the index sort by rating and filter by a minimum without joining to the
+reviews on every page load.
+
+Those two fields are derived data, and they are recomputed from the reviews
+themselves after each write rather than adjusted in place. Recomputing costs one
+extra query per review, and in exchange a write that fails partway leaves the
+summary stale rather than permanently wrong: the next review, or a rerun of the
+migration, puts it right. Transactions would be the usual answer, but they
+require a replica set, and this runs happily against a standalone `mongod`.
+
+Reviews reference their restaurant rather than the restaurant holding an array
+of review IDs. Adding a review is therefore a single insert that cannot
+half-succeed.
+
+Both of these differ from how the data used to be stored, so `models.Migrate`
+runs at startup, unrolling the old arrays onto the reviews, discarding reviews
+whose restaurant no longer exists, and computing summaries that were never
+there. It is idempotent and a no-op once applied, so it is safe on every boot.
+Reviews written before ratings existed keep a rating of `0`: they still count as
+reviews and still display, but they are left out of the average, and a
+restaurant with nothing but those reads as "Not yet rated".
 
 ## Built with
 

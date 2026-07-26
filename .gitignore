@@ -1,2 +1,9 @@
-connoisseur
+# `go build .` names the binary after the module path's last element.
+/Connoisseur
+/connoisseur
 *.exe
+
+.DS_Store
+**/.DS_Store
+
+.env

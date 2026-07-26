@@ -2,12 +2,15 @@ package web
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -16,7 +19,7 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 
-	"github.com/shivamdubey91/connoisseur/models"
+	"github.com/ayushkokande/Connoisseur/models"
 )
 
 // These are integration tests: they need a MongoDB reachable at TEST_DATABASE_URL
@@ -30,6 +33,10 @@ var (
 )
 
 func TestMain(m *testing.M) {
+	// Request logging would otherwise interleave a line per request into the
+	// test output; failures report what they need themselves.
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+
 	uri := os.Getenv("TEST_DATABASE_URL")
 	if uri == "" {
 		uri = "mongodb://localhost:27017"
@@ -43,6 +50,12 @@ func TestMain(m *testing.M) {
 		mongoAvailable = true
 		testDB = client.Database("connoisseur_test")
 		if err := models.Init(testDB); err != nil {
+			panic(err)
+		}
+		// Migrate installs the index enforcing one review per author, so without
+		// it these tests would run against a laxer database than production and
+		// would not notice that rule breaking.
+		if err := models.Migrate(ctx); err != nil {
 			panic(err)
 		}
 		InitSessions("test-session-secret", false)
@@ -110,6 +123,28 @@ func (b *browser) get(path string) (string, string) {
 	return body, token
 }
 
+// noRedirects returns a browser sharing this one's session that reports
+// redirects instead of following them, so a test can assert where a handler
+// sends the user rather than only where they end up.
+func (b *browser) noRedirects() *browser {
+	b.t.Helper()
+	return &browser{t: b.t, client: &http.Client{
+		Jar:           b.client.Jar,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}}
+}
+
+// getResponse fetches a page and returns the response itself, for tests
+// interested in the status or headers rather than the body.
+func (b *browser) getResponse(path string) *http.Response {
+	b.t.Helper()
+	resp, err := b.client.Get(server.URL + path)
+	if err != nil {
+		b.t.Fatalf("GET %s: %v", path, err)
+	}
+	return resp
+}
+
 // post submits a form, taking a CSRF token from tokenPage. It follows redirects
 // and returns the final response.
 func (b *browser) post(tokenPage, action string, form url.Values) *http.Response {
@@ -149,6 +184,16 @@ func mustID(t *testing.T, hex string) bson.ObjectID {
 		t.Fatalf("not a valid object ID: %q", hex)
 	}
 	return id
+}
+
+// countRestaurants reports how many restaurants exist, regardless of paging.
+func countRestaurants(t *testing.T) int64 {
+	t.Helper()
+	page, err := models.FindRestaurants(context.Background(), models.RestaurantQuery{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return page.Total
 }
 
 func readAll(t *testing.T, resp *http.Response) string {
@@ -200,20 +245,25 @@ func (b *browser) createRestaurant(name string) string {
 // createComment adds a review to a restaurant and returns the comment ID.
 func (b *browser) createComment(restaurantID, text string) string {
 	b.t.Helper()
+	return b.createRating(restaurantID, 4, text)
+}
+
+// createRating adds a review with an explicit star rating.
+func (b *browser) createRating(restaurantID string, rating int, text string) string {
+	b.t.Helper()
 	resp := b.post("/restaurants/"+restaurantID+"/comments/new",
 		"/restaurants/"+restaurantID+"/comments",
-		url.Values{"text": {text}})
+		url.Values{"rating": {strconv.Itoa(rating)}, "text": {text}})
 	defer resp.Body.Close()
 
-	ctx := context.Background()
-	restaurant, err := models.FindRestaurantByID(ctx, mustID(b.t, restaurantID))
+	reviews, err := models.FindCommentsByRestaurant(context.Background(), mustID(b.t, restaurantID))
 	if err != nil {
 		b.t.Fatal(err)
 	}
-	if len(restaurant.Comments) == 0 {
-		b.t.Fatalf("comment was not attached to restaurant %s", restaurantID)
+	if len(reviews) == 0 {
+		b.t.Fatalf("review was not attached to restaurant %s", restaurantID)
 	}
-	return restaurant.Comments[len(restaurant.Comments)-1].Hex()
+	return reviews[len(reviews)-1].ID.Hex()
 }
 
 func TestOwnerCanEditAndDeleteOwnRestaurant(t *testing.T) {
@@ -340,12 +390,8 @@ func TestAnonymousCannotCreateRestaurant(t *testing.T) {
 	if resp.Request.URL.Path != "/login" {
 		t.Errorf("anonymous create was not redirected to /login, landed on %s", resp.Request.URL.Path)
 	}
-	all, err := models.FindAllRestaurants(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(all) != 0 {
-		t.Errorf("anonymous visitor created %d restaurant(s)", len(all))
+	if n := countRestaurants(t); n != 0 {
+		t.Errorf("anonymous visitor created %d restaurant(s)", n)
 	}
 }
 
@@ -386,11 +432,7 @@ func TestRestaurantValidationRejectsBadInput(t *testing.T) {
 			resp := owner.post("/restaurants/new", "/restaurants", tc.form)
 			resp.Body.Close()
 
-			all, err := models.FindAllRestaurants(context.Background())
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(all) != 0 {
+			if countRestaurants(t) != 0 {
 				t.Errorf("invalid restaurant (%s) was saved", tc.name)
 			}
 		})

@@ -11,6 +11,21 @@
 	object-fit: cover;
 }
 
+.rating-stars {
+	color: #f0ad4e;
+	letter-spacing: 0.05em;
+	white-space: nowrap;
+}
+
+.filter-bar {
+	background-color: #f8f9fa;
+	border: 1px solid #dee2e6;
+	border-radius: 0.25rem;
+	padding: 0.75rem 0.75rem 0.25rem;
+	margin-right: 0;
+	margin-left: 0;
+}
+
 .card-img-top {
 	max-height: 420px;
 	object-fit: cover;

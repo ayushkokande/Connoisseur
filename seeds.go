@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
 
-	"github.com/shivamdubey91/connoisseur/models"
+	"go.mongodb.org/mongo-driver/v2/bson"
+
+	"github.com/ayushkokande/Connoisseur/models"
 )
 
 var seedData = []models.Restaurant{
@@ -38,26 +40,82 @@ var seedData = []models.Restaurant{
 	},
 }
 
+type seedReview struct {
+	Author string
+	Rating int
+	Text   string
+}
+
+// seedReviews are attached to each seeded restaurant in turn, so the sample data
+// exercises ratings and averages rather than showing every listing as unrated.
+// Each restaurant's reviewers are distinct, since one person may only review a
+// restaurant once.
+var seedReviews = [][]seedReview{
+	{
+		{"marco", 5, "The tagliatelle al ragù is worth the trip on its own."},
+		{"lena", 4, "Lovely room and attentive service, though the wine list is pricey."},
+	},
+	{
+		{"lena", 5, "Best omakase in the city. Book weeks ahead."},
+		{"priya", 5, "Every course was a surprise. Sit at the counter."},
+		{"tom", 3, "Excellent fish, but the seats are cramped."},
+	},
+	{
+		{"marco", 4, "Al pastor straight off the trompo. Bring cash."},
+	},
+	{
+		{"priya", 5, "A genuinely memorable tasting menu."},
+		{"tom", 2, "Beautiful plates, tiny portions, eye-watering bill."},
+	},
+}
+
+// seedAuthors hands out a stable identity per reviewer name, so the same person
+// reviewing several restaurants is recognisably the same person.
+func seedAuthors() map[string]models.Author {
+	authors := map[string]models.Author{}
+	for _, reviews := range seedReviews {
+		for _, review := range reviews {
+			if _, seen := authors[review.Author]; !seen {
+				authors[review.Author] = models.Author{
+					ID:       bson.NewObjectID(),
+					Username: review.Author,
+				}
+			}
+		}
+	}
+	return authors
+}
+
 func seedDB() {
 	ctx := context.Background()
 
 	if err := models.DeleteAllRestaurants(ctx); err != nil {
-		log.Println(err)
+		slog.Error("seed: deleting restaurants", "error", err)
 		return
 	}
-	log.Println("Deleted all restaurants from the database!")
-
 	if err := models.DeleteAllComments(ctx); err != nil {
-		log.Println(err)
+		slog.Error("seed: deleting comments", "error", err)
 		return
 	}
+	slog.Info("seed: cleared existing restaurants and comments")
 
-	for _, seed := range seedData {
+	authors := seedAuthors()
+
+	for i, seed := range seedData {
 		restaurant := seed
 		if err := models.CreateRestaurant(ctx, &restaurant); err != nil {
-			log.Println(err)
+			slog.Error("seed: creating restaurant", "name", restaurant.Name, "error", err)
 			continue
 		}
-		log.Println("Added seed restaurant: " + restaurant.Name)
+
+		if i < len(seedReviews) {
+			for _, review := range seedReviews[i] {
+				_, err := models.CreateComment(ctx, restaurant.ID, review.Rating, review.Text, authors[review.Author])
+				if err != nil {
+					slog.Error("seed: creating review", "restaurant", restaurant.Name, "error", err)
+				}
+			}
+		}
+		slog.Info("seed: added restaurant", "name", restaurant.Name)
 	}
 }
