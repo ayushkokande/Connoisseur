@@ -3,6 +3,7 @@ package models
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
@@ -10,9 +11,19 @@ import (
 )
 
 type User struct {
-	ID           bson.ObjectID `bson:"_id,omitempty"`
-	Username     string        `bson:"username"`
-	PasswordHash []byte        `bson:"passwordHash"`
+	ID       bson.ObjectID `bson:"_id,omitempty"`
+	Username string        `bson:"username"`
+	// UsernameLower is what uniqueness is enforced on and what logging in looks
+	// up by, so that a name cannot be claimed twice in different cases and
+	// nobody has to remember how they capitalised it. Username keeps the
+	// capitalisation they chose, which is what gets displayed.
+	UsernameLower string `bson:"usernameLower"`
+	PasswordHash  []byte `bson:"passwordHash"`
+}
+
+// normalizeUsername reduces a username to the form uniqueness is judged on.
+func normalizeUsername(username string) string {
+	return strings.ToLower(username)
 }
 
 var (
@@ -30,9 +41,10 @@ func RegisterUser(ctx context.Context, username, password string) (*User, error)
 		return nil, err
 	}
 	user := &User{
-		ID:           bson.NewObjectID(),
-		Username:     username,
-		PasswordHash: hash,
+		ID:            bson.NewObjectID(),
+		Username:      username,
+		UsernameLower: normalizeUsername(username),
+		PasswordHash:  hash,
 	}
 	if _, err := users.InsertOne(ctx, user); err != nil {
 		if mongo.IsDuplicateKeyError(err) {
@@ -58,7 +70,7 @@ const dummyPasswordHash = "$2a$10$AQVY8W1rx8ACRtIPf3fjw.zpcBazg0KIq/831nozdLBhpg
 // AuthenticateUser checks the username/password pair.
 func AuthenticateUser(ctx context.Context, username, password string) (*User, error) {
 	var user User
-	err := users.FindOne(ctx, bson.M{"username": username}).Decode(&user)
+	err := users.FindOne(ctx, bson.M{"usernameLower": normalizeUsername(username)}).Decode(&user)
 	if err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
 			// Hash anyway, so that the reply takes as long as a real check.

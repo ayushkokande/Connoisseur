@@ -539,3 +539,44 @@ func TestDuplicateUsernameIsRejected(t *testing.T) {
 		t.Errorf("duplicate username was accepted, landed on %s", resp.Request.URL.Path)
 	}
 }
+
+// Capitalisation is not what makes an account distinct. Registering "Admin"
+// against an existing "admin" would otherwise produce a second account that
+// reads as the first everywhere a name is shown.
+func TestUsernameIsTakenRegardlessOfCase(t *testing.T) {
+	requireMongo(t)
+
+	first := newBrowser(t)
+	first.register("MixedName")
+
+	for _, variant := range []string{"mixedname", "MIXEDNAME"} {
+		t.Run(variant, func(t *testing.T) {
+			b := newBrowser(t)
+			resp := b.post("/register", "/register", url.Values{
+				"username": {variant},
+				"password": {"another-good-password"},
+			})
+			defer resp.Body.Close()
+
+			if resp.Request.URL.Path != "/register" {
+				t.Errorf("%q was accepted alongside MixedName, landed on %s", variant, resp.Request.URL.Path)
+			}
+		})
+	}
+
+	// The original still logs in, under any capitalisation.
+	returning := newBrowser(t)
+	resp := returning.post("/login", "/login", url.Values{
+		"username": {"MIXEDNAME"},
+		"password": {"correct-horse-battery"},
+	})
+	defer resp.Body.Close()
+
+	if !strings.HasSuffix(resp.Request.URL.Path, "/restaurants") {
+		t.Errorf("logging in with different capitalisation landed on %s", resp.Request.URL.Path)
+	}
+	body, _ := returning.get("/restaurants")
+	if !strings.Contains(body, "MixedName") {
+		t.Error("the navbar does not show the capitalisation the account was created with")
+	}
+}
