@@ -49,7 +49,9 @@ func Init(db *mongo.Database) error {
 		return err
 	}
 
-	// Every review read is scoped to one restaurant.
+	// Every review read is scoped to one restaurant. The unique index enforcing
+	// one review per author is created by Migrate instead, which has to clear out
+	// any pre-existing duplicates before the index can build.
 	_, err := comments.Indexes().CreateOne(ctx, mongo.IndexModel{
 		Keys: bson.D{{Key: "restaurantId", Value: 1}, {Key: "createdAt", Value: 1}},
 	})

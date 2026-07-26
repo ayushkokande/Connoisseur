@@ -2,6 +2,7 @@ package models
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -68,14 +69,14 @@ func TestReviewsMaintainRatingSummary(t *testing.T) {
 	ctx := context.Background()
 
 	restaurant := newRestaurant(t, "Summary Bistro")
-	author := Author{ID: bson.NewObjectID(), Username: "reviewer"}
 
 	if got := reload(t, restaurant.ID); got.ReviewCount != 0 || got.AvgRating != 0 {
 		t.Errorf("new restaurant has %d reviews averaging %v, want 0 and 0",
 			got.ReviewCount, got.AvgRating)
 	}
 
-	first, err := CreateComment(ctx, restaurant.ID, 4, "Pretty good.", author)
+	// Distinct authors, since one author may only review a restaurant once.
+	first, err := CreateComment(ctx, restaurant.ID, 4, "Pretty good.", newAuthor("first_reviewer"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +85,7 @@ func TestReviewsMaintainRatingSummary(t *testing.T) {
 			got.ReviewCount, got.AvgRating)
 	}
 
-	if _, err := CreateComment(ctx, restaurant.ID, 2, "Not for me.", author); err != nil {
+	if _, err := CreateComment(ctx, restaurant.ID, 2, "Not for me.", newAuthor("second_reviewer")); err != nil {
 		t.Fatal(err)
 	}
 	if got := reload(t, restaurant.ID); got.ReviewCount != 2 || got.AvgRating != 3 {
@@ -115,7 +116,8 @@ func TestRatingSummaryIsScopedToOneRestaurant(t *testing.T) {
 
 	first := newRestaurant(t, "First")
 	second := newRestaurant(t, "Second")
-	author := Author{ID: bson.NewObjectID(), Username: "reviewer"}
+	// The same author may review two different restaurants.
+	author := newAuthor("reviewer")
 
 	if _, err := CreateComment(ctx, first.ID, 5, "Superb.", author); err != nil {
 		t.Fatal(err)
@@ -139,9 +141,8 @@ func TestUnratedReviewsAreExcludedFromTheAverage(t *testing.T) {
 	ctx := context.Background()
 
 	restaurant := newRestaurant(t, "Legacy Bistro")
-	author := Author{ID: bson.NewObjectID(), Username: "reviewer"}
 
-	if _, err := CreateComment(ctx, restaurant.ID, 4, "Rated.", author); err != nil {
+	if _, err := CreateComment(ctx, restaurant.ID, 4, "Rated.", newAuthor("rated_reviewer")); err != nil {
 		t.Fatal(err)
 	}
 	// Written directly, since the model layer will not accept a 0 rating.
@@ -150,7 +151,7 @@ func TestUnratedReviewsAreExcludedFromTheAverage(t *testing.T) {
 		RestaurantID: restaurant.ID,
 		Rating:       0,
 		Text:         "Written before ratings existed.",
-		Author:       author,
+		Author:       newAuthor("legacy_reviewer"),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +178,7 @@ func TestOnlyUnratedReviewsLeaveNoAverage(t *testing.T) {
 		ID:           bson.NewObjectID(),
 		RestaurantID: restaurant.ID,
 		Text:         "No stars on this one.",
-		Author:       Author{ID: bson.NewObjectID(), Username: "reviewer"},
+		Author:       newAuthor("reviewer"),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +200,7 @@ func TestCreateCommentRejectsInvalidRating(t *testing.T) {
 	ctx := context.Background()
 
 	restaurant := newRestaurant(t, "Strict Bistro")
-	author := Author{ID: bson.NewObjectID(), Username: "reviewer"}
+	author := newAuthor("reviewer")
 
 	for _, rating := range []int{0, -1, 6} {
 		if _, err := CreateComment(ctx, restaurant.ID, rating, "Some text.", author); err == nil {
@@ -213,6 +214,101 @@ func TestCreateCommentRejectsInvalidRating(t *testing.T) {
 	}
 	if len(reviews) != 0 {
 		t.Errorf("%d invalid review(s) were stored", len(reviews))
+	}
+}
+
+func TestAnAuthorMayOnlyReviewARestaurantOnce(t *testing.T) {
+	requireMongo(t)
+	requireUniqueReviewIndex(t)
+	ctx := context.Background()
+
+	restaurant := newRestaurant(t, "Once Bistro")
+	author := newAuthor("repeat_reviewer")
+
+	if _, err := CreateComment(ctx, restaurant.ID, 5, "Wonderful.", author); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := CreateComment(ctx, restaurant.ID, 5, "Wonderful again.", author)
+	if !errors.Is(err, ErrAlreadyReviewed) {
+		t.Fatalf("second review returned %v, want ErrAlreadyReviewed", err)
+	}
+
+	// The point of the rule: a second review must not move the average.
+	got := reload(t, restaurant.ID)
+	if got.ReviewCount != 1 {
+		t.Errorf("review count = %d, want 1", got.ReviewCount)
+	}
+	if got.AvgRating != 5 {
+		t.Errorf("average = %v, want 5", got.AvgRating)
+	}
+}
+
+// Repeated five-star reviews from one account were the way to climb the
+// top-rated listing, so check that stops at one.
+func TestRepeatedReviewsCannotInflateTheAverage(t *testing.T) {
+	requireMongo(t)
+	requireUniqueReviewIndex(t)
+	ctx := context.Background()
+
+	restaurant := newRestaurant(t, "Ballot Box Bistro")
+	honest := newAuthor("honest_reviewer")
+	if _, err := CreateComment(ctx, restaurant.ID, 1, "Poor.", honest); err != nil {
+		t.Fatal(err)
+	}
+
+	stuffer := newAuthor("ballot_stuffer")
+	accepted := 0
+	for range 10 {
+		if _, err := CreateComment(ctx, restaurant.ID, 5, "Amazing!", stuffer); err == nil {
+			accepted++
+		}
+	}
+	if accepted != 1 {
+		t.Errorf("%d of 10 repeat reviews were accepted, want 1", accepted)
+	}
+
+	// One 1-star and one 5-star review average 3, not something near 5.
+	if got := reload(t, restaurant.ID); got.AvgRating != 3 {
+		t.Errorf("average = %v, want 3", got.AvgRating)
+	}
+}
+
+func TestFindCommentByAuthor(t *testing.T) {
+	requireMongo(t)
+	ctx := context.Background()
+
+	restaurant := newRestaurant(t, "Lookup Bistro")
+	author := newAuthor("known_reviewer")
+
+	found, err := FindCommentByAuthor(ctx, restaurant.ID, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found != nil {
+		t.Fatal("found a review before one was written")
+	}
+
+	created, err := CreateComment(ctx, restaurant.ID, 3, "Fine.", author)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	found, err = FindCommentByAuthor(ctx, restaurant.ID, author.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found == nil || found.ID != created.ID {
+		t.Fatalf("got %v, want the review just created", found)
+	}
+
+	// Another author's review of the same restaurant must not be returned.
+	other, err := FindCommentByAuthor(ctx, restaurant.ID, bson.NewObjectID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if other != nil {
+		t.Error("returned a review belonging to a different author")
 	}
 }
 

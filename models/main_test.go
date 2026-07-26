@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -65,6 +66,31 @@ func requireMongo(t *testing.T) {
 			t.Fatalf("clearing %s: %v", name, err)
 		}
 	}
+
+	// Indexes outlive DeleteMany, and the unique review index is created by
+	// Migrate rather than Init. Dropping it gives each test the same starting
+	// point as a fresh database, which is what lets the migration tests seed the
+	// duplicates they exist to clean up.
+	err := testDB.Collection("comments").Indexes().DropOne(ctx, uniqueReviewIndexName)
+	if err != nil && !strings.Contains(err.Error(), "index not found") {
+		t.Fatalf("dropping the unique review index: %v", err)
+	}
+}
+
+const uniqueReviewIndexName = "restaurantId_1_author.id_1"
+
+// requireUniqueReviewIndex installs the index that enforces one review per
+// author. Tests of that rule need it, because the rule is the index.
+func requireUniqueReviewIndex(t *testing.T) {
+	t.Helper()
+	if err := createUniqueReviewIndex(context.Background()); err != nil {
+		t.Fatalf("creating the unique review index: %v", err)
+	}
+}
+
+// newAuthor returns a distinct review author.
+func newAuthor(username string) Author {
+	return Author{ID: bson.NewObjectID(), Username: username}
 }
 
 // newRestaurant inserts a restaurant and returns it.

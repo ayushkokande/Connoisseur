@@ -1,6 +1,7 @@
 package web
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -12,6 +13,13 @@ import (
 func commentsNewForm(w http.ResponseWriter, r *http.Request) {
 	restaurant, ok := loadRestaurant(w, r)
 	if !ok {
+		return
+	}
+	// Someone arriving here with a review already written wants to change it,
+	// however they got here, so send them to it rather than to a form that
+	// cannot be submitted.
+	if existing := existingReview(r, restaurant.ID); existing != nil {
+		redirectToReview(w, r, restaurant.ID, existing.ID, "You have already reviewed this restaurant. You can update your review here.")
 		return
 	}
 	render(w, r, "comments/new", map[string]any{
@@ -32,6 +40,18 @@ func commentsCreate(w http.ResponseWriter, r *http.Request) {
 		r.PostFormValue("text"),
 		models.Author{ID: user.ID, Username: user.Username},
 	)
+
+	if errors.Is(err, models.ErrAlreadyReviewed) {
+		if existing := existingReview(r, restaurant.ID); existing != nil {
+			redirectToReview(w, r, restaurant.ID, existing.ID, "You have already reviewed this restaurant. You can update your review here.")
+			return
+		}
+		// The review exists but could not be read back, so there is nowhere
+		// specific to send them.
+		flash(w, r, "error", "You have already reviewed this restaurant.")
+		http.Redirect(w, r, "/restaurants/"+restaurant.ID.Hex(), http.StatusFound)
+		return
+	}
 	if err != nil {
 		flashFailure(w, r, err, "creating comment", "Something went wrong adding your review.")
 		http.Redirect(w, r, "/restaurants/"+restaurant.ID.Hex()+"/comments/new", http.StatusFound)
@@ -39,6 +59,32 @@ func commentsCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	flash(w, r, "success", "Review added!")
 	http.Redirect(w, r, "/restaurants/"+restaurant.ID.Hex(), http.StatusFound)
+}
+
+// existingReview returns the current user's review of a restaurant, or nil if
+// they have not reviewed it or the lookup failed.
+func existingReview(r *http.Request, restaurantID bson.ObjectID) *models.Comment {
+	user := CurrentUser(r)
+	if user == nil {
+		return nil
+	}
+	review, err := models.FindCommentByAuthor(r.Context(), restaurantID, user.ID)
+	if err != nil {
+		logger(r).Error("looking up existing review",
+			"restaurant_id", restaurantID.Hex(),
+			"user_id", user.ID.Hex(),
+			"error", err,
+		)
+		return nil
+	}
+	return review
+}
+
+func redirectToReview(w http.ResponseWriter, r *http.Request, restaurantID, commentID bson.ObjectID, message string) {
+	flash(w, r, "error", message)
+	http.Redirect(w, r,
+		"/restaurants/"+restaurantID.Hex()+"/comments/"+commentID.Hex()+"/edit",
+		http.StatusFound)
 }
 
 // ratingValue parses a submitted star rating. Anything unparseable becomes 0,

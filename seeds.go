@@ -40,29 +40,50 @@ var seedData = []models.Restaurant{
 	},
 }
 
-// seedReviews are attached to each seeded restaurant in turn, so the sample
-// data exercises ratings and averages rather than showing every listing as
-// unrated.
-var seedReviews = [][]struct {
+type seedReview struct {
+	Author string
 	Rating int
 	Text   string
-}{
+}
+
+// seedReviews are attached to each seeded restaurant in turn, so the sample data
+// exercises ratings and averages rather than showing every listing as unrated.
+// Each restaurant's reviewers are distinct, since one person may only review a
+// restaurant once.
+var seedReviews = [][]seedReview{
 	{
-		{5, "The tagliatelle al ragù is worth the trip on its own."},
-		{4, "Lovely room and attentive service, though the wine list is pricey."},
+		{"marco", 5, "The tagliatelle al ragù is worth the trip on its own."},
+		{"lena", 4, "Lovely room and attentive service, though the wine list is pricey."},
 	},
 	{
-		{5, "Best omakase in the city. Book weeks ahead."},
-		{5, "Every course was a surprise. Sit at the counter."},
-		{3, "Excellent fish, but the seats are cramped."},
+		{"lena", 5, "Best omakase in the city. Book weeks ahead."},
+		{"priya", 5, "Every course was a surprise. Sit at the counter."},
+		{"tom", 3, "Excellent fish, but the seats are cramped."},
 	},
 	{
-		{4, "Al pastor straight off the trompo. Bring cash."},
+		{"marco", 4, "Al pastor straight off the trompo. Bring cash."},
 	},
 	{
-		{5, "A genuinely memorable tasting menu."},
-		{2, "Beautiful plates, tiny portions, eye-watering bill."},
+		{"priya", 5, "A genuinely memorable tasting menu."},
+		{"tom", 2, "Beautiful plates, tiny portions, eye-watering bill."},
 	},
+}
+
+// seedAuthors hands out a stable identity per reviewer name, so the same person
+// reviewing several restaurants is recognisably the same person.
+func seedAuthors() map[string]models.Author {
+	authors := map[string]models.Author{}
+	for _, reviews := range seedReviews {
+		for _, review := range reviews {
+			if _, seen := authors[review.Author]; !seen {
+				authors[review.Author] = models.Author{
+					ID:       bson.NewObjectID(),
+					Username: review.Author,
+				}
+			}
+		}
+	}
+	return authors
 }
 
 func seedDB() {
@@ -78,7 +99,7 @@ func seedDB() {
 	}
 	slog.Info("seed: cleared existing restaurants and comments")
 
-	critic := models.Author{ID: bson.NewObjectID(), Username: "connoisseur"}
+	authors := seedAuthors()
 
 	for i, seed := range seedData {
 		restaurant := seed
@@ -89,7 +110,8 @@ func seedDB() {
 
 		if i < len(seedReviews) {
 			for _, review := range seedReviews[i] {
-				if _, err := models.CreateComment(ctx, restaurant.ID, review.Rating, review.Text, critic); err != nil {
+				_, err := models.CreateComment(ctx, restaurant.ID, review.Rating, review.Text, authors[review.Author])
+				if err != nil {
 					slog.Error("seed: creating review", "restaurant", restaurant.Name, "error", err)
 				}
 			}

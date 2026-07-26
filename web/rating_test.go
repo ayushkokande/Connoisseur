@@ -2,6 +2,8 @@ package web
 
 import (
 	"context"
+	"fmt"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -30,8 +32,13 @@ func seedRated(t *testing.T, name string, ratings ...int) *models.Restaurant {
 		t.Fatalf("creating %q: %v", name, err)
 	}
 
-	author := models.Author{ID: bson.NewObjectID(), Username: "rating_reviewer"}
-	for _, rating := range ratings {
+	// A distinct author per review, since one author may only review a
+	// restaurant once.
+	for i, rating := range ratings {
+		author := models.Author{
+			ID:       bson.NewObjectID(),
+			Username: fmt.Sprintf("rating_reviewer_%d", i),
+		}
 		if _, err := models.CreateComment(ctx, restaurant.ID, rating, "Seeded review.", author); err != nil {
 			t.Fatalf("reviewing %q: %v", name, err)
 		}
@@ -215,6 +222,158 @@ func TestIndexFiltersByMinimumRating(t *testing.T) {
 			t.Errorf("got %d restaurants, want all 3", n)
 		}
 	})
+}
+
+// Posting a second review must not add to the count or move the average, which
+// is what made repeated five-star submissions a way to climb the listing.
+func TestSecondReviewIsRefusedAndOffersTheFirst(t *testing.T) {
+	requireMongo(t)
+
+	reviewer := newBrowser(t)
+	reviewer.register("rating_repeat")
+	id := reviewer.createRestaurant("Once Only Bistro")
+	commentID := reviewer.createRating(id, 1, "Not good at all.")
+
+	// The token comes from the restaurant page, because the review form itself
+	// now redirects for someone who has already reviewed.
+	resp := reviewer.noRedirects().post("/restaurants/"+id,
+		"/restaurants/"+id+"/comments",
+		url.Values{"rating": {"5"}, "text": {"Actually it is superb."}})
+	defer resp.Body.Close()
+
+	// Sent to the existing review rather than left on a form that cannot succeed.
+	wantPath := "/restaurants/" + id + "/comments/" + commentID + "/edit"
+	if location := resp.Header.Get("Location"); location != wantPath {
+		t.Errorf("redirected to %q, want %q", location, wantPath)
+	}
+
+	restaurant, err := models.FindRestaurantByID(context.Background(), mustID(t, id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restaurant.ReviewCount != 1 {
+		t.Errorf("review count = %d, want 1", restaurant.ReviewCount)
+	}
+	if restaurant.AvgRating != 1 {
+		t.Errorf("average = %v, want 1; the second review moved it", restaurant.AvgRating)
+	}
+}
+
+// Ten repeat submissions is the actual attack, so exercise it rather than one.
+func TestRepeatedReviewsCannotClimbTheListing(t *testing.T) {
+	requireMongo(t)
+
+	honest := newBrowser(t)
+	honest.register("rating_honest")
+	id := honest.createRestaurant("Contested Bistro")
+	honest.createRating(id, 1, "Genuinely poor.")
+
+	stuffer := newBrowser(t)
+	stuffer.register("rating_stuffer")
+	for range 10 {
+		resp := stuffer.post("/restaurants/"+id,
+			"/restaurants/"+id+"/comments",
+			url.Values{"rating": {"5"}, "text": {"Best ever!"}})
+		resp.Body.Close()
+	}
+
+	reviews, err := models.FindCommentsByRestaurant(context.Background(), mustID(t, id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reviews) != 2 {
+		t.Errorf("%d reviews stored, want 2 (one each)", len(reviews))
+	}
+
+	restaurant, err := models.FindRestaurantByID(context.Background(), mustID(t, id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restaurant.AvgRating != 3 {
+		t.Errorf("average = %v, want 3 (one 1-star and one 5-star)", restaurant.AvgRating)
+	}
+}
+
+// Someone who already reviewed a restaurant should be taken to their review
+// rather than shown a form whose submission is bound to be refused.
+func TestReviewFormRedirectsWhenAlreadyReviewed(t *testing.T) {
+	requireMongo(t)
+
+	reviewer := newBrowser(t)
+	reviewer.register("rating_returning")
+	id := reviewer.createRestaurant("Returning Bistro")
+	commentID := reviewer.createRating(id, 3, "Perfectly fine.")
+
+	resp := reviewer.noRedirects().getResponse("/restaurants/" + id + "/comments/new")
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusFound {
+		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusFound)
+	}
+
+	wantPath := "/restaurants/" + id + "/comments/" + commentID + "/edit"
+	if location := resp.Header.Get("Location"); location != wantPath {
+		t.Errorf("redirected to %q, want %q", location, wantPath)
+	}
+}
+
+// The restaurant page should offer editing rather than adding once the visitor
+// has reviewed, and go on offering a new review to everyone else.
+func TestShowPageOffersEditingOwnReview(t *testing.T) {
+	requireMongo(t)
+
+	reviewer := newBrowser(t)
+	reviewer.register("rating_shown")
+	id := reviewer.createRestaurant("Shown Bistro")
+
+	body, _ := reviewer.get("/restaurants/" + id)
+	if !strings.Contains(body, "Add Review") {
+		t.Error("no invitation to review before the visitor has reviewed")
+	}
+
+	commentID := reviewer.createRating(id, 4, "Good stuff.")
+
+	body, _ = reviewer.get("/restaurants/" + id)
+	if !strings.Contains(body, "Edit your review") {
+		t.Error("the page does not offer to edit the visitor's own review")
+	}
+	if !strings.Contains(body, "/comments/"+commentID+"/edit") {
+		t.Error("the edit link does not point at the visitor's review")
+	}
+	if strings.Contains(body, ">Add Review<") {
+		t.Error("still inviting a second review")
+	}
+
+	// A different visitor has not reviewed it, so they still should be invited.
+	other := newBrowser(t)
+	other.register("rating_other")
+	body, _ = other.get("/restaurants/" + id)
+	if !strings.Contains(body, "Add Review") {
+		t.Error("a visitor who has not reviewed is not invited to")
+	}
+}
+
+// The same person reviewing two different restaurants is perfectly normal.
+func TestOneAuthorCanReviewDifferentRestaurants(t *testing.T) {
+	requireMongo(t)
+
+	reviewer := newBrowser(t)
+	reviewer.register("rating_traveller")
+	first := reviewer.createRestaurant("First Bistro")
+	second := reviewer.createRestaurant("Second Bistro")
+
+	reviewer.createRating(first, 5, "Loved it.")
+	reviewer.createRating(second, 2, "Less so.")
+
+	for id, want := range map[string]float64{first: 5, second: 2} {
+		restaurant, err := models.FindRestaurantByID(context.Background(), mustID(t, id))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if restaurant.AvgRating != want {
+			t.Errorf("%s averages %v, want %v", restaurant.Name, restaurant.AvgRating, want)
+		}
+	}
 }
 
 // The rating filter has to survive paging like every other filter.

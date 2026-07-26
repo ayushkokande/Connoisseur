@@ -52,6 +52,12 @@ func TestMain(m *testing.M) {
 		if err := models.Init(testDB); err != nil {
 			panic(err)
 		}
+		// Migrate installs the index enforcing one review per author, so without
+		// it these tests would run against a laxer database than production and
+		// would not notice that rule breaking.
+		if err := models.Migrate(ctx); err != nil {
+			panic(err)
+		}
 		InitSessions("test-session-secret", false)
 		if err := InitTemplates("../templates"); err != nil {
 			panic(err)
@@ -115,6 +121,28 @@ func (b *browser) get(path string) (string, string) {
 		token = m[1]
 	}
 	return body, token
+}
+
+// noRedirects returns a browser sharing this one's session that reports
+// redirects instead of following them, so a test can assert where a handler
+// sends the user rather than only where they end up.
+func (b *browser) noRedirects() *browser {
+	b.t.Helper()
+	return &browser{t: b.t, client: &http.Client{
+		Jar:           b.client.Jar,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}}
+}
+
+// getResponse fetches a page and returns the response itself, for tests
+// interested in the status or headers rather than the body.
+func (b *browser) getResponse(path string) *http.Response {
+	b.t.Helper()
+	resp, err := b.client.Get(server.URL + path)
+	if err != nil {
+		b.t.Fatalf("GET %s: %v", path, err)
+	}
+	return resp
 }
 
 // post submits a form, taking a CSRF token from tokenPage. It follows redirects

@@ -2,9 +2,11 @@ package models
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
 
@@ -29,7 +31,14 @@ func (c Comment) IsRated() bool { return c.Rating >= minRating }
 // Stars renders the rating as filled and empty stars for display.
 func (c Comment) Stars() string { return Stars(c.Rating) }
 
+// ErrAlreadyReviewed is returned when an author tries to review a restaurant
+// they have already reviewed. Callers are expected to offer to edit the
+// existing review instead.
+var ErrAlreadyReviewed = errors.New("models: author has already reviewed this restaurant")
+
 // CreateComment stores a review and refreshes its restaurant's rating summary.
+// An author may only review a restaurant once; a second attempt returns
+// ErrAlreadyReviewed.
 func CreateComment(ctx context.Context, restaurantID bson.ObjectID, rating int, text string, author Author) (*Comment, error) {
 	text, err := validateCommentText(text)
 	if err != nil {
@@ -47,10 +56,34 @@ func CreateComment(ctx context.Context, restaurantID bson.ObjectID, rating int, 
 		CreatedAt:    time.Now(),
 		Author:       author,
 	}
+	// The one-review-per-author rule is enforced by a unique index rather than
+	// by checking first, so two simultaneous submissions cannot both pass the
+	// check and then both insert.
 	if _, err := comments.InsertOne(ctx, comment); err != nil {
+		if mongo.IsDuplicateKeyError(err) {
+			return nil, ErrAlreadyReviewed
+		}
 		return nil, err
 	}
 	return comment, RefreshRating(ctx, restaurantID)
+}
+
+// FindCommentByAuthor returns an author's review of a restaurant, or nil when
+// they have not reviewed it.
+func FindCommentByAuthor(ctx context.Context, restaurantID, authorID bson.ObjectID) (*Comment, error) {
+	var comment Comment
+	err := comments.FindOne(ctx, bson.M{
+		"restaurantId": restaurantID,
+		"author.id":    authorID,
+	}).Decode(&comment)
+
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &comment, nil
 }
 
 func FindCommentByID(ctx context.Context, id bson.ObjectID) (*Comment, error) {

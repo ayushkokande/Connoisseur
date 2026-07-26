@@ -46,10 +46,13 @@
 				<div class="card-body">
 					<div class="d-flex justify-content-between align-items-center mb-3">
 						<h4 class="mb-0">Reviews</h4>
-						{{if $currentUser}}
-							<a class="btn btn-success" href="/restaurants/{{$restaurant.ID.Hex}}/comments/new">Add Review</a>
-						{{else}}
+						{{if not $currentUser}}
 							<a class="btn btn-outline-success" href="/login">Log in to review</a>
+						{{else if .Data.UserReview}}
+							{{/* One review per person, so offer to change theirs. */}}
+							<a class="btn btn-outline-success" href="/restaurants/{{$restaurant.ID.Hex}}/comments/{{.Data.UserReview.ID.Hex}}/edit">Edit your review</a>
+						{{else}}
+							<a class="btn btn-success" href="/restaurants/{{$restaurant.ID.Hex}}/comments/new">Add Review</a>
 						{{end}}
 					</div>
 					<hr>

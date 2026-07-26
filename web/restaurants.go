@@ -117,7 +117,24 @@ func restaurantsShow(w http.ResponseWriter, r *http.Request) {
 	render(w, r, "restaurants/show", map[string]any{
 		"Restaurant": restaurant,
 		"Comments":   comments,
+		// Picked out of the reviews already loaded, so offering "edit your
+		// review" instead of "add review" costs no extra query.
+		"UserReview": ownReview(r, comments),
 	})
+}
+
+// ownReview finds the current user's review among a restaurant's reviews.
+func ownReview(r *http.Request, reviews []models.Comment) *models.Comment {
+	user := CurrentUser(r)
+	if user == nil {
+		return nil
+	}
+	for i := range reviews {
+		if reviews[i].Author.ID == user.ID {
+			return &reviews[i]
+		}
+	}
+	return nil
 }
 
 func restaurantsEditForm(w http.ResponseWriter, r *http.Request) {

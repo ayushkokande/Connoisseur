@@ -2,6 +2,8 @@ package models
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -16,16 +18,18 @@ func legacyFixture(t *testing.T) (restaurantID bson.ObjectID, commentIDs []bson.
 	ctx := context.Background()
 
 	restaurantID = bson.NewObjectID()
-	author := bson.M{"id": bson.NewObjectID(), "username": "legacy_user"}
+	owner := bson.M{"id": bson.NewObjectID(), "username": "legacy_owner"}
 
-	for range 2 {
+	// Distinct authors, so both reviews survive the one-per-author rule and this
+	// fixture isolates the linking behaviour from the deduplication behaviour.
+	for i := range 2 {
 		id := bson.NewObjectID()
 		commentIDs = append(commentIDs, id)
 		if _, err := comments.InsertOne(ctx, bson.M{
 			"_id":       id,
 			"text":      "A review from before ratings existed.",
 			"createdAt": time.Now(),
-			"author":    author,
+			"author":    bson.M{"id": bson.NewObjectID(), "username": fmt.Sprintf("legacy_user_%d", i)},
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -39,7 +43,7 @@ func legacyFixture(t *testing.T) (restaurantID bson.ObjectID, commentIDs []bson.
 		"priceRange":  "$$",
 		"description": "Stored in the old shape.",
 		"createdAt":   time.Now(),
-		"author":      author,
+		"author":      owner,
 		"comments":    commentIDs,
 	}); err != nil {
 		t.Fatal(err)
@@ -121,6 +125,100 @@ func TestMigrateIsIdempotent(t *testing.T) {
 	}
 	if len(reviews) != len(commentIDs) {
 		t.Errorf("second run left %d reviews, want %d", len(reviews), len(commentIDs))
+	}
+}
+
+// Older data predates the one-review-per-author rule, so the migration has to
+// clear duplicates out before the unique index can be built.
+func TestMigrateRemovesDuplicateReviews(t *testing.T) {
+	requireMongo(t)
+	ctx := context.Background()
+
+	restaurant := newRestaurant(t, "Duplicated Bistro")
+	author := newAuthor("prolific_reviewer")
+
+	// Three reviews of one restaurant by one author, oldest first. The newest is
+	// the opinion that should survive.
+	base := time.Now().Add(-3 * time.Hour)
+	for i, rating := range []int{1, 3, 5} {
+		if _, err := comments.InsertOne(ctx, Comment{
+			ID:           bson.NewObjectID(),
+			RestaurantID: restaurant.ID,
+			Rating:       rating,
+			Text:         fmt.Sprintf("Visit number %d.", i+1),
+			CreatedAt:    base.Add(time.Duration(i) * time.Hour),
+			Author:       author,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := Migrate(ctx); err != nil {
+		t.Fatalf("migrating: %v", err)
+	}
+
+	remaining, err := FindCommentsByRestaurant(ctx, restaurant.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(remaining) != 1 {
+		t.Fatalf("%d reviews remain, want 1", len(remaining))
+	}
+	if remaining[0].Rating != 5 {
+		t.Errorf("the surviving review is rated %d, want 5 (the most recent)", remaining[0].Rating)
+	}
+	if remaining[0].Text != "Visit number 3." {
+		t.Errorf("the surviving review reads %q, want the most recent one", remaining[0].Text)
+	}
+
+	// The summary has to reflect the deletions, not the three original reviews.
+	summary := reload(t, restaurant.ID)
+	if summary.ReviewCount != 1 || summary.AvgRating != 5 {
+		t.Errorf("summary is %d reviews averaging %v, want 1 and 5",
+			summary.ReviewCount, summary.AvgRating)
+	}
+
+	// Having cleaned up, the migration should have installed the index that stops
+	// it happening again.
+	if _, err := CreateComment(ctx, restaurant.ID, 5, "And again.", author); !errors.Is(err, ErrAlreadyReviewed) {
+		t.Errorf("a further review returned %v, want ErrAlreadyReviewed", err)
+	}
+}
+
+// The same author reviewing two different restaurants is not a duplicate.
+func TestMigrateKeepsOneAuthorsReviewsOfDifferentRestaurants(t *testing.T) {
+	requireMongo(t)
+	ctx := context.Background()
+
+	first := newRestaurant(t, "First Bistro")
+	second := newRestaurant(t, "Second Bistro")
+	author := newAuthor("travelling_reviewer")
+
+	for _, restaurant := range []*Restaurant{first, second} {
+		if _, err := comments.InsertOne(ctx, Comment{
+			ID:           bson.NewObjectID(),
+			RestaurantID: restaurant.ID,
+			Rating:       4,
+			Text:         "Worth a visit.",
+			CreatedAt:    time.Now(),
+			Author:       author,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := Migrate(ctx); err != nil {
+		t.Fatalf("migrating: %v", err)
+	}
+
+	for _, restaurant := range []*Restaurant{first, second} {
+		reviews, err := FindCommentsByRestaurant(ctx, restaurant.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(reviews) != 1 {
+			t.Errorf("%s has %d reviews, want 1", restaurant.Name, len(reviews))
+		}
 	}
 }
 
