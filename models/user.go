@@ -43,12 +43,26 @@ func RegisterUser(ctx context.Context, username, password string) (*User, error)
 	return user, nil
 }
 
+// dummyPasswordHash is compared against when the username does not exist, so
+// that authentication costs the same whether or not it does. Without it the
+// unknown-username path skips bcrypt and returns in microseconds while a known
+// username spends tens of milliseconds hashing, which is a reliable oracle for
+// enumerating registered accounts.
+//
+// It hashes a random string that was thrown away, and the result of comparing
+// against it is discarded regardless, so there is no harm in it being public.
+// Its cost has to track bcrypt.DefaultCost for the timings to match, which
+// TestDummyHashMatchesDefaultCost checks.
+const dummyPasswordHash = "$2a$10$AQVY8W1rx8ACRtIPf3fjw.zpcBazg0KIq/831nozdLBhpgB5YAmRi"
+
 // AuthenticateUser checks the username/password pair.
 func AuthenticateUser(ctx context.Context, username, password string) (*User, error) {
 	var user User
 	err := users.FindOne(ctx, bson.M{"username": username}).Decode(&user)
 	if err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
+			// Hash anyway, so that the reply takes as long as a real check.
+			bcrypt.CompareHashAndPassword([]byte(dummyPasswordHash), []byte(password))
 			return nil, ErrInvalidCredentials
 		}
 		return nil, err

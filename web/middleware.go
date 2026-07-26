@@ -83,6 +83,12 @@ func checkCommentOwnership(next http.HandlerFunc) http.HandlerFunc {
 			redirectBack(w, r)
 			return
 		}
+		restaurantID, err := bson.ObjectIDFromHex(r.PathValue("id"))
+		if err != nil {
+			flash(w, r, "error", "Review not found!")
+			redirectBack(w, r)
+			return
+		}
 		id, err := bson.ObjectIDFromHex(r.PathValue("comment_id"))
 		if err != nil {
 			flash(w, r, "error", "Review not found!")
@@ -91,6 +97,15 @@ func checkCommentOwnership(next http.HandlerFunc) http.HandlerFunc {
 		}
 		comment, err := models.FindCommentByID(r.Context(), id)
 		if err != nil {
+			flash(w, r, "error", "Review not found!")
+			redirectBack(w, r)
+			return
+		}
+		// The review has to be the one this URL names, not merely a review the
+		// visitor owns. Otherwise editing through another restaurant's URL
+		// succeeds and then redirects to that restaurant, which reports the
+		// change against a page it never appeared on.
+		if comment.RestaurantID != restaurantID {
 			flash(w, r, "error", "Review not found!")
 			redirectBack(w, r)
 			return
