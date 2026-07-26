@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
+	"time"
 	"unicode/utf8"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -186,15 +188,57 @@ func FindRestaurants(ctx context.Context, q RestaurantQuery) (*RestaurantPage, e
 	}, nil
 }
 
+// cuisineCacheTTL bounds how long the filter menu can lag the data. Writes
+// invalidate the cache outright, so this only matters when another process made
+// the change.
+const cuisineCacheTTL = time.Minute
+
+var cuisineCache struct {
+	mu      sync.RWMutex
+	values  []string
+	expires time.Time
+}
+
+// invalidateCuisines drops the cached menu, so a restaurant added, retitled or
+// removed shows up in the filter immediately rather than at the next expiry.
+func invalidateCuisines() {
+	cuisineCache.mu.Lock()
+	cuisineCache.expires = time.Time{}
+	cuisineCache.mu.Unlock()
+}
+
 // DistinctCuisines lists the cuisines currently in use, sorted, for the filter
 // menu. Cuisine is free text, so the menu reflects what users have entered
 // rather than a fixed vocabulary.
+//
+// The result is cached because building it is a collection-wide distinct and
+// the restaurant index rendered one on every request. The rebuild deliberately
+// runs without holding the lock: a burst arriving exactly at expiry may issue a
+// few queries between them, which is still bounded by concurrency rather than
+// by traffic, and blocking every reader on one database round trip to avoid
+// that is the worse trade.
 func DistinctCuisines(ctx context.Context) ([]string, error) {
+	cuisineCache.mu.RLock()
+	cached, fresh := cuisineCache.values, time.Now().Before(cuisineCache.expires)
+	cuisineCache.mu.RUnlock()
+
+	if fresh {
+		// Copied, so a caller sorting or filtering the menu cannot reach into
+		// the cache and change what everyone else sees.
+		return slices.Clone(cached), nil
+	}
+
 	var values []string
 	if err := restaurants.Distinct(ctx, "cuisine", bson.M{}).Decode(&values); err != nil {
 		return nil, err
 	}
 	values = slices.DeleteFunc(values, func(s string) bool { return strings.TrimSpace(s) == "" })
 	slices.Sort(values)
-	return values, nil
+
+	cuisineCache.mu.Lock()
+	cuisineCache.values = values
+	cuisineCache.expires = time.Now().Add(cuisineCacheTTL)
+	cuisineCache.mu.Unlock()
+
+	return slices.Clone(values), nil
 }

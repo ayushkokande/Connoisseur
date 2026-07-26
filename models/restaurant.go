@@ -54,8 +54,11 @@ func CreateRestaurant(ctx context.Context, r *Restaurant) error {
 	r.CreatedAt = time.Now()
 	r.ReviewCount = 0
 	r.AvgRating = 0
-	_, err := restaurants.InsertOne(ctx, r)
-	return err
+	if _, err := restaurants.InsertOne(ctx, r); err != nil {
+		return err
+	}
+	invalidateCuisines()
+	return nil
 }
 
 func FindRestaurantByID(ctx context.Context, id bson.ObjectID) (*Restaurant, error) {
@@ -79,8 +82,11 @@ func UpdateRestaurant(ctx context.Context, id bson.ObjectID, r *Restaurant) erro
 		"priceRange":  r.PriceRange,
 		"description": r.Description,
 	}
-	_, err := restaurants.UpdateOne(ctx, bson.M{"_id": id}, bson.M{"$set": fields})
-	return err
+	if _, err := restaurants.UpdateOne(ctx, bson.M{"_id": id}, bson.M{"$set": fields}); err != nil {
+		return err
+	}
+	invalidateCuisines()
+	return nil
 }
 
 func DeleteRestaurant(ctx context.Context, id bson.ObjectID) (*Restaurant, error) {
@@ -88,6 +94,7 @@ func DeleteRestaurant(ctx context.Context, id bson.ObjectID) (*Restaurant, error
 	if err := restaurants.FindOneAndDelete(ctx, bson.M{"_id": id}).Decode(&r); err != nil {
 		return nil, err
 	}
+	invalidateCuisines()
 	return &r, nil
 }
 
@@ -136,8 +143,11 @@ func RefreshRating(ctx context.Context, restaurantID bson.ObjectID) error {
 }
 
 func DeleteAllRestaurants(ctx context.Context) error {
-	_, err := restaurants.DeleteMany(ctx, bson.M{})
-	return err
+	if _, err := restaurants.DeleteMany(ctx, bson.M{}); err != nil {
+		return err
+	}
+	invalidateCuisines()
+	return nil
 }
 
 func DeleteAllComments(ctx context.Context) error {
