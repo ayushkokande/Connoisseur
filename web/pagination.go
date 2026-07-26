@@ -68,20 +68,22 @@ func restaurantsURL(query models.RestaurantQuery, page int) string {
 	return "/restaurants?" + values.Encode()
 }
 
-// pageLinks returns the numbered page links to render, windowed around the
-// current page. It returns nil when there is only one page.
-func pageLinks(query models.RestaurantQuery, results *models.RestaurantPage) []pageLink {
-	if results.TotalPages < 2 {
+// windowedPageLinks returns the numbered page links to render, windowed around
+// the current one. It returns nil when there is only one page. urlFor builds the
+// link for a page number, which is all that differs between the paginated
+// collections.
+func windowedPageLinks(current, totalPages int, urlFor func(int) string) []pageLink {
+	if totalPages < 2 {
 		return nil
 	}
 
-	start := results.Page - pageWindow/2
+	start := current - pageWindow/2
 	if start < 1 {
 		start = 1
 	}
 	end := start + pageWindow - 1
-	if end > results.TotalPages {
-		end = results.TotalPages
+	if end > totalPages {
+		end = totalPages
 		start = max(end-pageWindow+1, 1)
 	}
 
@@ -89,19 +91,60 @@ func pageLinks(query models.RestaurantQuery, results *models.RestaurantPage) []p
 	for page := start; page <= end; page++ {
 		links = append(links, pageLink{
 			Number:  page,
-			URL:     restaurantsURL(query, page),
-			Current: page == results.Page,
+			URL:     urlFor(page),
+			Current: page == current,
 		})
 	}
 	return links
 }
 
-// adjacentPageURL returns the URL of the page offset away from the current one,
-// or "" when there is no such page.
-func adjacentPageURL(query models.RestaurantQuery, results *models.RestaurantPage, offset int) string {
-	page := results.Page + offset
-	if page < 1 || page > results.TotalPages {
+// adjacentURL returns the URL of the page offset away from the current one, or
+// "" when there is no such page.
+func adjacentURL(current, totalPages, offset int, urlFor func(int) string) string {
+	page := current + offset
+	if page < 1 || page > totalPages {
 		return ""
 	}
-	return restaurantsURL(query, page)
+	return urlFor(page)
+}
+
+// pageLinks returns the numbered links for the restaurant index.
+func pageLinks(query models.RestaurantQuery, results *models.RestaurantPage) []pageLink {
+	return windowedPageLinks(results.Page, results.TotalPages, func(page int) string {
+		return restaurantsURL(query, page)
+	})
+}
+
+// adjacentPageURL returns the restaurant index page offset away from the
+// current one, or "" when there is no such page.
+func adjacentPageURL(query models.RestaurantQuery, results *models.RestaurantPage, offset int) string {
+	return adjacentURL(results.Page, results.TotalPages, offset, func(page int) string {
+		return restaurantsURL(query, page)
+	})
+}
+
+// reviewsURL builds a restaurant page URL showing the given page of reviews.
+// The fragment lands the visitor on the reviews rather than back at the top of
+// the restaurant, which is what they were reading.
+func reviewsURL(restaurantID string, page int) string {
+	base := "/restaurants/" + restaurantID
+	if page <= 1 {
+		return base + "#reviews"
+	}
+	return base + "?page=" + strconv.Itoa(page) + "#reviews"
+}
+
+// reviewPageLinks returns the numbered links for one restaurant's reviews.
+func reviewPageLinks(restaurantID string, reviews *models.CommentPage) []pageLink {
+	return windowedPageLinks(reviews.Page, reviews.TotalPages, func(page int) string {
+		return reviewsURL(restaurantID, page)
+	})
+}
+
+// adjacentReviewURL returns the review page offset away from the current one,
+// or "" when there is no such page.
+func adjacentReviewURL(restaurantID string, reviews *models.CommentPage, offset int) string {
+	return adjacentURL(reviews.Page, reviews.TotalPages, offset, func(page int) string {
+		return reviewsURL(restaurantID, page)
+	})
 }

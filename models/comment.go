@@ -94,11 +94,19 @@ func FindCommentByID(ctx context.Context, id bson.ObjectID) (*Comment, error) {
 	return &comment, nil
 }
 
-// FindCommentsByRestaurant returns a restaurant's reviews, oldest first.
+// reviewOrder is oldest first, with _id breaking ties. Timestamps are stored to
+// the millisecond, so without a tiebreaker two reviews written in the same
+// millisecond have no defined order — and an undefined order across a page
+// boundary lets one appear on two pages or on none.
+var reviewOrder = bson.D{{Key: "createdAt", Value: 1}, {Key: "_id", Value: 1}}
+
+// FindCommentsByRestaurant returns all of a restaurant's reviews, oldest first.
+// Anything rendering them wants FindCommentsPage instead; this is for callers
+// that genuinely need the whole set.
 func FindCommentsByRestaurant(ctx context.Context, restaurantID bson.ObjectID) ([]Comment, error) {
 	cursor, err := comments.Find(ctx,
 		bson.M{"restaurantId": restaurantID},
-		options.Find().SetSort(bson.D{{Key: "createdAt", Value: 1}, {Key: "_id", Value: 1}}))
+		options.Find().SetSort(reviewOrder))
 	if err != nil {
 		return nil, err
 	}
@@ -107,6 +115,75 @@ func FindCommentsByRestaurant(ctx context.Context, restaurantID bson.ObjectID) (
 		return nil, err
 	}
 	return results, nil
+}
+
+const (
+	// DefaultReviewsPerPage shows a useful number of reviews without pushing the
+	// rest of the restaurant page out of reach.
+	DefaultReviewsPerPage = 10
+	maxReviewsPerPage     = 50
+)
+
+// CommentPage is one page of a restaurant's reviews plus the totals needed to
+// render pagination controls.
+type CommentPage struct {
+	Comments   []Comment
+	Total      int64
+	Page       int
+	PerPage    int
+	TotalPages int
+}
+
+// HasPrev reports whether a previous page exists.
+func (p CommentPage) HasPrev() bool { return p.Page > 1 }
+
+// HasNext reports whether a further page exists.
+func (p CommentPage) HasNext() bool { return p.Page < p.TotalPages }
+
+// FindCommentsPage returns one page of a restaurant's reviews, oldest first.
+// Out-of-range arguments are clamped rather than rejected, so a bookmarked link
+// to a page that no longer exists still shows reviews.
+func FindCommentsPage(ctx context.Context, restaurantID bson.ObjectID, page, perPage int) (*CommentPage, error) {
+	if perPage < 1 || perPage > maxReviewsPerPage {
+		perPage = DefaultReviewsPerPage
+	}
+	if page < 1 {
+		page = 1
+	}
+
+	filter := bson.M{"restaurantId": restaurantID}
+	total, err := comments.CountDocuments(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+
+	totalPages := int((total + int64(perPage) - 1) / int64(perPage))
+	if totalPages < 1 {
+		totalPages = 1
+	}
+	if page > totalPages {
+		page = totalPages
+	}
+
+	cursor, err := comments.Find(ctx, filter, options.Find().
+		SetSort(reviewOrder).
+		SetSkip(int64((page-1)*perPage)).
+		SetLimit(int64(perPage)))
+	if err != nil {
+		return nil, err
+	}
+	var results []Comment
+	if err := cursor.All(ctx, &results); err != nil {
+		return nil, err
+	}
+
+	return &CommentPage{
+		Comments:   results,
+		Total:      total,
+		Page:       page,
+		PerPage:    perPage,
+		TotalPages: totalPages,
+	}, nil
 }
 
 // UpdateComment rewrites a review's rating and text, then refreshes its

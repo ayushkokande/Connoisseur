@@ -42,10 +42,15 @@
 				</div>
 			</div>
 
-			<div class="card">
+			<div class="card" id="reviews">
 				<div class="card-body">
 					<div class="d-flex justify-content-between align-items-center mb-3">
-						<h4 class="mb-0">Reviews</h4>
+						<h4 class="mb-0">
+							Reviews
+							{{if gt .Data.Reviews.TotalPages 1}}
+								<small class="text-muted">page {{.Data.Reviews.Page}} of {{.Data.Reviews.TotalPages}}</small>
+							{{end}}
+						</h4>
 						{{if not $currentUser}}
 							<a class="btn btn-outline-success" href="/login">Log in to review</a>
 						{{else if .Data.UserReview}}
@@ -56,10 +61,10 @@
 						{{end}}
 					</div>
 					<hr>
-					{{if not .Data.Comments}}
+					{{if not .Data.Reviews.Comments}}
 						<p class="text-muted">No reviews yet. Be the first to review this restaurant!</p>
 					{{end}}
-					{{range .Data.Comments}}
+					{{range .Data.Reviews.Comments}}
 						<div class="mb-3">
 							<div class="d-flex justify-content-between">
 								<strong>{{.Author.Username}}</strong>
@@ -78,6 +83,36 @@
 							{{end}}
 							<hr>
 						</div>
+					{{end}}
+
+					{{if .Data.Pages}}
+						<nav aria-label="Review pages">
+							<ul class="pagination pagination-sm justify-content-center mb-0">
+								<li class="page-item {{if not .Data.PrevURL}}disabled{{end}}">
+									{{if .Data.PrevURL}}
+										<a class="page-link" href="{{.Data.PrevURL}}" rel="prev">Previous</a>
+									{{else}}
+										<span class="page-link">Previous</span>
+									{{end}}
+								</li>
+								{{range .Data.Pages}}
+									<li class="page-item {{if .Current}}active{{end}}">
+										{{if .Current}}
+											<span class="page-link">{{.Number}}</span>
+										{{else}}
+											<a class="page-link" href="{{.URL}}">{{.Number}}</a>
+										{{end}}
+									</li>
+								{{end}}
+								<li class="page-item {{if not .Data.NextURL}}disabled{{end}}">
+									{{if .Data.NextURL}}
+										<a class="page-link" href="{{.Data.NextURL}}" rel="next">Next</a>
+									{{else}}
+										<span class="page-link">Next</span>
+									{{end}}
+								</li>
+							</ul>
+						</nav>
 					{{end}}
 				</div>
 			</div>

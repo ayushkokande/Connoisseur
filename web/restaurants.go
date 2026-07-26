@@ -110,31 +110,24 @@ func restaurantsShow(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	comments, err := models.FindCommentsByRestaurant(r.Context(), restaurant.ID)
+	id := restaurant.ID.Hex()
+	reviews, err := models.FindCommentsPage(r.Context(), restaurant.ID,
+		pageNumber(r.URL.Query().Get("page")), models.DefaultReviewsPerPage)
 	if err != nil {
-		logger(r).Error("loading comments", "restaurant_id", restaurant.ID.Hex(), "error", err)
+		logger(r).Error("loading comments", "restaurant_id", id, "error", err)
+		reviews = &models.CommentPage{Page: 1, TotalPages: 1}
 	}
+
 	render(w, r, "restaurants/show", map[string]any{
 		"Restaurant": restaurant,
-		"Comments":   comments,
-		// Picked out of the reviews already loaded, so offering "edit your
-		// review" instead of "add review" costs no extra query.
-		"UserReview": ownReview(r, comments),
+		"Reviews":    reviews,
+		// Looked up rather than picked out of the page above, because the
+		// visitor's own review is not necessarily on the page being shown.
+		"UserReview": existingReview(r, restaurant.ID),
+		"Pages":      reviewPageLinks(id, reviews),
+		"PrevURL":    adjacentReviewURL(id, reviews, -1),
+		"NextURL":    adjacentReviewURL(id, reviews, 1),
 	})
-}
-
-// ownReview finds the current user's review among a restaurant's reviews.
-func ownReview(r *http.Request, reviews []models.Comment) *models.Comment {
-	user := CurrentUser(r)
-	if user == nil {
-		return nil
-	}
-	for i := range reviews {
-		if reviews[i].Author.ID == user.ID {
-			return &reviews[i]
-		}
-	}
-	return nil
 }
 
 func restaurantsEditForm(w http.ResponseWriter, r *http.Request) {
