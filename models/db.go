@@ -7,7 +7,6 @@ import (
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
-	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
 
 var (
@@ -30,12 +29,9 @@ func Init(db *mongo.Database) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if _, err := users.Indexes().CreateOne(ctx, mongo.IndexModel{
-		Keys:    bson.D{{Key: "username", Value: 1}},
-		Options: options.Index().SetUnique(true),
-	}); err != nil {
-		return err
-	}
+	// The unique index on usernameLower, like the one on reviews below, is
+	// created by Migrate: older data can hold names that collide once case is
+	// ignored, and those have to be settled before the index will build.
 
 	// These back the sort orders and filters on the restaurant index. The free
 	// text search is a substring regex and cannot use them.

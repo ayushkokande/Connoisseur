@@ -5,7 +5,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -67,17 +66,26 @@ func requireMongo(t *testing.T) {
 		}
 	}
 
-	// Indexes outlive DeleteMany, and the unique review index is created by
-	// Migrate rather than Init. Dropping it gives each test the same starting
-	// point as a fresh database, which is what lets the migration tests seed the
-	// duplicates they exist to clean up.
-	err := testDB.Collection("comments").Indexes().DropOne(ctx, uniqueReviewIndexName)
-	if err != nil && !strings.Contains(err.Error(), "index not found") {
-		t.Fatalf("dropping the unique review index: %v", err)
+	// Indexes outlive DeleteMany, and the unique ones are created by Migrate
+	// rather than Init. Dropping them gives each test the same starting point as
+	// a fresh database, which is what lets the migration tests seed the
+	// duplicates they exist to clean up. dropIndex is the migration's own
+	// helper, so a collection a previous test dropped entirely is tolerated here
+	// for the same reason it is at startup.
+	for collection, index := range map[*mongo.Collection]string{
+		comments: uniqueReviewIndexName,
+		users:    uniqueUsernameIndexName,
+	} {
+		if err := dropIndex(ctx, collection, index); err != nil {
+			t.Fatalf("dropping %s: %v", index, err)
+		}
 	}
 }
 
-const uniqueReviewIndexName = "restaurantId_1_author.id_1"
+const (
+	uniqueReviewIndexName   = "restaurantId_1_author.id_1"
+	uniqueUsernameIndexName = "usernameLower_1"
+)
 
 // requireUniqueReviewIndex installs the index that enforces one review per
 // author. Tests of that rule need it, because the rule is the index.
@@ -85,6 +93,15 @@ func requireUniqueReviewIndex(t *testing.T) {
 	t.Helper()
 	if err := createUniqueReviewIndex(context.Background()); err != nil {
 		t.Fatalf("creating the unique review index: %v", err)
+	}
+}
+
+// requireUniqueUsernameIndex installs the index that enforces one account per
+// name regardless of case, for the same reason.
+func requireUniqueUsernameIndex(t *testing.T) {
+	t.Helper()
+	if err := createUniqueUsernameIndex(context.Background()); err != nil {
+		t.Fatalf("creating the unique username index: %v", err)
 	}
 }
 

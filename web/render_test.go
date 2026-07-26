@@ -38,6 +38,15 @@ func TestTemplatesRender(t *testing.T) {
 		Author:       models.Author{ID: user.ID, Username: user.Username},
 	}
 
+	// A second page of reviews, so the review pagination controls render too.
+	showReviews := &models.CommentPage{
+		Comments:   []models.Comment{comment},
+		Total:      int64(models.DefaultReviewsPerPage + 1),
+		Page:       2,
+		PerPage:    models.DefaultReviewsPerPage,
+		TotalPages: 2,
+	}
+
 	// A second page of results, so the pagination controls are exercised too.
 	indexQuery := models.RestaurantQuery{Search: "bistro", Page: 2}
 	indexQuery.Normalize()
@@ -65,7 +74,14 @@ func TestTemplatesRender(t *testing.T) {
 			"PrevURL":       adjacentPageURL(indexQuery, indexResults, -1),
 			"NextURL":       adjacentPageURL(indexQuery, indexResults, 1),
 		},
-		"restaurants/show": {"Restaurant": restaurant, "Comments": []models.Comment{comment}},
+		"restaurants/show": {
+			"Restaurant": restaurant,
+			"Reviews":    showReviews,
+			"UserReview": &comment,
+			"Pages":      reviewPageLinks(restaurant.ID.Hex(), showReviews),
+			"PrevURL":    adjacentReviewURL(restaurant.ID.Hex(), showReviews, -1),
+			"NextURL":    adjacentReviewURL(restaurant.ID.Hex(), showReviews, 1),
+		},
 		"restaurants/new":  nil,
 		"restaurants/edit": {"Restaurant": restaurant},
 		"comments/new": {

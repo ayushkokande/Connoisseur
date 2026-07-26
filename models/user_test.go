@@ -53,6 +53,52 @@ func TestAuthenticateUser(t *testing.T) {
 	})
 }
 
+// A name may only be claimed once however it is capitalised, or "Admin" and
+// "admin" are two accounts and either can be mistaken for the other.
+func TestUsernamesAreClaimedRegardlessOfCase(t *testing.T) {
+	requireMongo(t)
+	requireUniqueUsernameIndex(t)
+	ctx := context.Background()
+
+	if _, err := RegisterUser(ctx, "Connoisseur", "correct-horse-battery"); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, attempt := range []string{"connoisseur", "CONNOISSEUR", "ConNoIsSeUr"} {
+		if _, err := RegisterUser(ctx, attempt, "another-good-password"); !errors.Is(err, ErrUsernameTaken) {
+			t.Errorf("registering %q returned %v, want ErrUsernameTaken", attempt, err)
+		}
+	}
+}
+
+// Logging in should not depend on remembering the capitalisation, while the
+// display name keeps it.
+func TestLoginIgnoresCaseButDisplayNameKeepsIt(t *testing.T) {
+	requireMongo(t)
+	ctx := context.Background()
+
+	created, err := RegisterUser(ctx, "MixedCase", "correct-horse-battery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Username != "MixedCase" {
+		t.Errorf("stored display name is %q, want %q", created.Username, "MixedCase")
+	}
+
+	for _, attempt := range []string{"MixedCase", "mixedcase", "MIXEDCASE"} {
+		user, err := AuthenticateUser(ctx, attempt, "correct-horse-battery")
+		if err != nil {
+			t.Fatalf("logging in as %q: %v", attempt, err)
+		}
+		if user.ID != created.ID {
+			t.Errorf("logging in as %q reached a different account", attempt)
+		}
+		if user.Username != "MixedCase" {
+			t.Errorf("logging in as %q displays %q, want %q", attempt, user.Username, "MixedCase")
+		}
+	}
+}
+
 // Rejecting an unknown username must cost about what rejecting a known one
 // costs. Without the dummy hash the unknown path skips bcrypt entirely and
 // returns in microseconds against tens of milliseconds, which tells an attacker

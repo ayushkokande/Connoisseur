@@ -16,6 +16,7 @@ const (
 	currentUserKey
 	restaurantKey
 	commentKey
+	nonceKey
 )
 
 // currentUserResolver memoizes the current-user lookup. A page render asks for
