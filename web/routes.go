@@ -83,7 +83,9 @@ func Routes(cfg Config) http.Handler {
 	root.HandleFunc("GET "+healthPath, healthz)
 	root.Handle("/", handler)
 
-	return RequestLogger(root)
+	// SecurityHeaders wraps everything, so the static files and the responses
+	// produced by CSRF rejections and 404s are covered too.
+	return RequestLogger(SecurityHeaders(cfg.SecureCookies, root))
 }
 
 // markPlaintext tells gorilla/csrf that requests arrive over plain HTTP. Without

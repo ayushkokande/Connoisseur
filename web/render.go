@@ -51,7 +51,11 @@ type viewData struct {
 	FlashSuccess []string
 	FlashError   []string
 	CSRFField    template.HTML
-	Data         map[string]any
+	// Nonce authorises this response's inline script under the content security
+	// policy. A template with an inline <script> has to carry it or the browser
+	// refuses to run it.
+	Nonce string
+	Data  map[string]any
 }
 
 func render(w http.ResponseWriter, r *http.Request, page string, data map[string]any) {
@@ -65,6 +69,7 @@ func render(w http.ResponseWriter, r *http.Request, page string, data map[string
 		FlashSuccess: popFlashes(w, r, "success"),
 		FlashError:   popFlashes(w, r, "error"),
 		CSRFField:    csrf.TemplateField(r),
+		Nonce:        nonceFrom(r),
 		Data:         data,
 	}
 	// Rendered into a buffer first: executing straight into the ResponseWriter
