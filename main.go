@@ -94,6 +94,17 @@ func main() {
 		fatal("migrating data", "error", err)
 	}
 
+	// Requests arriving through a proxy carry the proxy's address, so without
+	// this every visitor would count against one shared rate limit. Left unset
+	// for a server reached directly, where X-Forwarded-For must not be believed.
+	trustedProxies, err := web.ParseTrustedProxies(os.Getenv("TRUSTED_PROXIES"))
+	if err != nil {
+		fatal("reading TRUSTED_PROXIES", "error", err)
+	}
+	if len(trustedProxies) > 0 {
+		slog.Info("trusting X-Forwarded-For from configured proxies", "networks", len(trustedProxies))
+	}
+
 	// Cookies are marked Secure only in production; over plain HTTP a Secure
 	// cookie is never sent back and login would silently fail.
 	web.InitSessions(sessionSecret, production)
@@ -109,9 +120,10 @@ func main() {
 	server := &http.Server{
 		Addr: ":" + port,
 		Handler: web.Routes(web.Config{
-			PublicDir:     "public",
-			CSRFSecret:    csrfSecret,
-			SecureCookies: production,
+			PublicDir:      "public",
+			CSRFSecret:     csrfSecret,
+			SecureCookies:  production,
+			TrustedProxies: trustedProxies,
 		}),
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 20 * time.Second,

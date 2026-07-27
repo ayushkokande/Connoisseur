@@ -12,7 +12,7 @@ import (
 // The bucket has to hand out its burst and then stop, which is the whole point:
 // a guesser gets a fixed number of tries and no more.
 func TestRateLimiterAllowsBurstThenRefuses(t *testing.T) {
-	limiter := newRateLimiter(RateLimit{Every: time.Minute, Burst: 3})
+	limiter := newRateLimiter(RateLimit{Every: time.Minute, Burst: 3}, nil)
 	now := time.Now()
 
 	for attempt := 1; attempt <= 3; attempt++ {
@@ -28,7 +28,7 @@ func TestRateLimiterAllowsBurstThenRefuses(t *testing.T) {
 // The budget comes back gradually, so a locked-out visitor is not locked out
 // forever.
 func TestRateLimiterRefillsOverTime(t *testing.T) {
-	limiter := newRateLimiter(RateLimit{Every: time.Minute, Burst: 2})
+	limiter := newRateLimiter(RateLimit{Every: time.Minute, Burst: 2}, nil)
 	now := time.Now()
 
 	for range 2 {
@@ -49,7 +49,7 @@ func TestRateLimiterRefillsOverTime(t *testing.T) {
 // One client exhausting its budget must not lock anybody else out, or a single
 // attacker could deny the whole site.
 func TestRateLimiterIsPerClient(t *testing.T) {
-	limiter := newRateLimiter(RateLimit{Every: time.Minute, Burst: 2})
+	limiter := newRateLimiter(RateLimit{Every: time.Minute, Burst: 2}, nil)
 	now := time.Now()
 
 	for range 3 {
@@ -63,7 +63,7 @@ func TestRateLimiterIsPerClient(t *testing.T) {
 // Buckets are dropped once idle long enough to have refilled, so a long-running
 // server does not accumulate one per address it has ever seen.
 func TestRateLimiterForgetsIdleClients(t *testing.T) {
-	limiter := newRateLimiter(RateLimit{Every: time.Second, Burst: 2})
+	limiter := newRateLimiter(RateLimit{Every: time.Second, Burst: 2}, nil)
 	now := time.Now()
 
 	limiter.allow("10.0.0.5", now)
@@ -102,7 +102,7 @@ func TestZeroRateLimitFallsBackToTheDefault(t *testing.T) {
 // Being throttled has to be reported as such, so that a proxy or a client can
 // tell it apart from a rejected password and knows when to come back.
 func TestThrottledRequestReports429AndRetryAfter(t *testing.T) {
-	limiter := newRateLimiter(RateLimit{Every: 30 * time.Second, Burst: 1})
+	limiter := newRateLimiter(RateLimit{Every: 30 * time.Second, Burst: 1}, nil)
 	handler := limiter.protect(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -128,20 +128,34 @@ func TestThrottledRequestReports429AndRetryAfter(t *testing.T) {
 	}
 }
 
-// A port is not part of a client's identity: every connection from one machine
-// has a different one, so keying on it would give an attacker a fresh budget
-// per attempt.
-func TestClientIPIgnoresThePort(t *testing.T) {
-	request := httptest.NewRequest(http.MethodPost, "/login", nil)
-	request.RemoteAddr = "192.0.2.10:44321"
-	if got := clientIP(request); got != "192.0.2.10" {
-		t.Errorf("clientIP = %q, want %q", got, "192.0.2.10")
+// Behind a proxy every request carries the proxy's address. Unless the
+// forwarded client is used, one visitor exhausting the budget locks out
+// everyone else arriving through the same proxy.
+func TestRateLimiterSeparatesClientsBehindAProxy(t *testing.T) {
+	trusted, err := ParseTrustedProxies("10.0.0.0/8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	limiter := newRateLimiter(RateLimit{Every: time.Minute, Burst: 2}, trusted)
+	now := time.Now()
+
+	spend := func(client string) bool {
+		return limiter.allow(clientIP(request("10.0.0.1:44321", client), trusted), now)
 	}
 
-	// Some transports report no port at all; the address is still usable.
-	request.RemoteAddr = "192.0.2.11"
-	if got := clientIP(request); got != "192.0.2.11" {
-		t.Errorf("clientIP of a portless address = %q, want %q", got, "192.0.2.11")
+	// One visitor burns their whole budget.
+	for range 2 {
+		if !spend("203.0.113.7") {
+			t.Fatal("the first visitor was refused within its burst")
+		}
+	}
+	if spend("203.0.113.7") {
+		t.Error("the first visitor was not throttled after its burst")
+	}
+
+	// A different visitor through the same proxy still has theirs.
+	if !spend("198.51.100.4") {
+		t.Error("a second visitor was locked out by the first, so they share a budget")
 	}
 }
 

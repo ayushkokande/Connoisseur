@@ -2,6 +2,7 @@ package web
 
 import (
 	"net/http"
+	"net/netip"
 
 	"github.com/gorilla/csrf"
 )
@@ -18,6 +19,13 @@ type Config struct {
 	// AuthRateLimit throttles login and registration per client address. The
 	// zero value applies DefaultAuthRateLimit.
 	AuthRateLimit RateLimit
+	// TrustedProxies are the networks whose X-Forwarded-For header is believed
+	// when working out which client a request came from. Leave it empty when
+	// this server is reached directly. Setting it wrongly is not cosmetic:
+	// behind an unconfigured proxy every visitor counts against one shared rate
+	// limit, and trusting a network that is not a proxy lets anything on it
+	// claim any address it likes.
+	TrustedProxies []netip.Prefix
 }
 
 // Routes builds the application handler, including CSRF protection, method
@@ -27,7 +35,7 @@ func Routes(cfg Config) http.Handler {
 
 	// Only the submissions are throttled, not the forms: fetching a login page
 	// costs nothing to serve and is not how a password is guessed.
-	auth := newRateLimiter(cfg.AuthRateLimit)
+	auth := newRateLimiter(cfg.AuthRateLimit, cfg.TrustedProxies)
 
 	// Auth
 	mux.HandleFunc("GET /{$}", landing)

@@ -2,8 +2,8 @@ package web
 
 import (
 	"math"
-	"net"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"sync"
 	"time"
@@ -40,6 +40,8 @@ const sweepInterval = time.Minute
 // rateLimiter hands out one token bucket per client address.
 type rateLimiter struct {
 	limit RateLimit
+	// trusted are the proxies whose X-Forwarded-For is believed. See clientIP.
+	trusted []netip.Prefix
 
 	mu        sync.Mutex
 	buckets   map[string]*bucket
@@ -51,8 +53,12 @@ type bucket struct {
 	lastSeen time.Time
 }
 
-func newRateLimiter(limit RateLimit) *rateLimiter {
-	return &rateLimiter{limit: limit.orDefault(), buckets: map[string]*bucket{}}
+func newRateLimiter(limit RateLimit, trusted []netip.Prefix) *rateLimiter {
+	return &rateLimiter{
+		limit:   limit.orDefault(),
+		trusted: trusted,
+		buckets: map[string]*bucket{},
+	}
 }
 
 // idleTTL is how long an unused bucket is kept. Once a bucket has had time to
@@ -100,7 +106,7 @@ func (l *rateLimiter) protect(next http.HandlerFunc) http.HandlerFunc {
 	retryAfter := strconv.Itoa(int(math.Ceil(l.limit.Every.Seconds())))
 
 	return func(w http.ResponseWriter, r *http.Request) {
-		client := clientIP(r)
+		client := clientIP(r, l.trusted)
 		if l.allow(client, time.Now()) {
 			next(w, r)
 			return
@@ -116,17 +122,4 @@ func (l *rateLimiter) protect(next http.HandlerFunc) http.HandlerFunc {
 		w.Header().Set("Retry-After", retryAfter)
 		http.Error(w, "Too many attempts. Please wait and try again.", http.StatusTooManyRequests)
 	}
-}
-
-// clientIP identifies the client for rate limiting. It deliberately uses the
-// address the connection came from rather than X-Forwarded-For: that header is
-// set by the caller, so trusting it would let an attacker reset their own
-// budget on every request just by varying it. Running behind a proxy needs a
-// trusted-proxy configuration here instead.
-func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
 }
