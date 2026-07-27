@@ -9,11 +9,11 @@ import (
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 
-	"github.com/ayushkokande/Connoisseur/models"
+	"github.com/ayushkokande/Connoisseur/internal/models"
 )
 
 func TestTemplatesRender(t *testing.T) {
-	if err := InitTemplates("../templates"); err != nil {
+	if err := InitTemplates("../../templates"); err != nil {
 		t.Fatal(err)
 	}
 

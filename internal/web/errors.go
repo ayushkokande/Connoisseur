@@ -3,7 +3,7 @@ package web
 import (
 	"net/http"
 
-	"github.com/ayushkokande/Connoisseur/models"
+	"github.com/ayushkokande/Connoisseur/internal/models"
 )
 
 // flashFailure shows a validation error verbatim (those messages are written

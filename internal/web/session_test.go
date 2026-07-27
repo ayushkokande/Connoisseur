@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ayushkokande/Connoisseur/models"
+	"github.com/ayushkokande/Connoisseur/internal/models"
 )
 
 // sessionCookie returns the browser's stored session cookie.

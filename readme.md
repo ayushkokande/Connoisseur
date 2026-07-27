@@ -66,7 +66,7 @@ cd Connoisseur
 ### Run the app
 
 ```sh
-go run .
+go run ./cmd/connoisseur
 ```
 
 The app runs at [http://localhost:3000](http://localhost:3000) and connects to `mongodb://localhost:27017` (database `connoisseur`) by default.
@@ -131,7 +131,7 @@ Then:
 ```sh
 export GOOGLE_CLIENT_ID=...
 export GOOGLE_CLIENT_SECRET=...
-go run .
+go run ./cmd/connoisseur
 ```
 
 Without them the site runs and can be browsed, but signing in reports itself
@@ -339,42 +339,59 @@ stylesheet, which is not a page anyone browses to.
 
 ## Project Structure
 
+The layout follows the usual Go convention: the binary lives under `cmd/`, and
+everything it is built from lives under `internal/`, which the compiler will not
+let anything outside this module import. That is the point — these packages are
+this application's insides, not a library, and nothing should grow a dependency
+on them by accident.
+
 ```
 Connoisseur/
-├── main.go             # App entry point: config, logging, DB connection, server startup
-├── seeds.go            # Optional database seeder (enabled with SEED_DB=true)
-├── Dockerfile          # Multi-stage build producing a static binary image
-├── docker-compose.yml  # App plus MongoDB for local development
-├── models/
-│   ├── db.go           # Collection handles, indexes, health ping
-│   ├── query.go        # Restaurant search, filtering, sorting and pagination
-│   ├── restaurant.go   # Restaurant model (name, image, cuisine, price range, ...)
-│   ├── comment.go      # Review model (text plus a 1-5 star rating)
-│   ├── migrate.go      # Idempotent startup migration of pre-existing data
-│   ├── user.go         # Accounts, keyed on the provider identity signed in with
-│   └── validate.go     # Input validation rules
-├── web/
-│   ├── routes.go       # Route table, handler config, CSRF protection
-│   ├── restaurants.go  # RESTful restaurant handlers
-│   ├── comments.go     # Nested review handlers
-│   ├── auth.go         # Landing, sign-in page, logout
-│   ├── oauth.go        # The provider flow: state, PKCE, callback, identity
-│   ├── signup.go       # Choosing a username on a first sign-in
-│   ├── account.go      # Signing out everywhere, and account deletion
-│   ├── middleware.go   # Auth & ownership middleware, method override
-│   ├── ratelimit.go    # Per-client token buckets for login and registration
-│   ├── clientip.go     # Client address resolution, trusted-proxy handling
-│   ├── headers.go      # Content security policy and other response headers
-│   ├── context.go      # Per-request user, restaurant and comment caching
-│   ├── pagination.go   # Page links and filter-preserving URLs
-│   ├── session.go      # Cookie sessions, current user, flash messages
-│   ├── errors.go       # Error-to-flash mapping
-│   ├── logging.go      # Request IDs and request logging middleware
-│   ├── health.go       # /healthz endpoint
-│   └── render.go       # Template parsing and rendering helpers
+├── cmd/
+│   └── connoisseur/
+│       ├── main.go     # Entry point: config, logging, DB connection, server startup
+│       └── seeds.go    # Optional database seeder (enabled with SEED_DB=true)
+├── internal/
+│   ├── models/         # Data and the rules over it; knows nothing about HTTP
+│   │   ├── db.go           # Collection handles, indexes, health ping
+│   │   ├── query.go        # Restaurant search, filtering, sorting and pagination
+│   │   ├── restaurant.go   # Restaurant model (name, image, cuisine, price range, ...)
+│   │   ├── comment.go      # Review model (text plus a 1-5 star rating)
+│   │   ├── migrate.go      # Idempotent startup migration of pre-existing data
+│   │   ├── user.go         # Accounts, keyed on the provider identity signed in with
+│   │   └── validate.go     # Input validation rules
+│   └── web/            # Everything HTTP: routing, middleware, handlers, views
+│       ├── routes.go       # Route table, handler config, CSRF protection
+│       ├── restaurants.go  # RESTful restaurant handlers
+│       ├── comments.go     # Nested review handlers
+│       ├── auth.go         # Landing, sign-in page, logout
+│       ├── oauth.go        # The provider flow: state, PKCE, callback, identity
+│       ├── signup.go       # Choosing a username on a first sign-in
+│       ├── account.go      # Signing out everywhere, and account deletion
+│       ├── middleware.go   # Auth & ownership middleware, method override
+│       ├── ratelimit.go    # Per-client token buckets for sign-in and writes
+│       ├── clientip.go     # Client address resolution, trusted-proxy handling
+│       ├── headers.go      # Content security policy and other response headers
+│       ├── context.go      # Per-request user, restaurant and comment caching
+│       ├── pagination.go   # Page links and filter-preserving URLs
+│       ├── session.go      # Cookie sessions, current user, flash messages
+│       ├── errors.go       # Error-to-flash mapping
+│       ├── logging.go      # Request IDs and request logging middleware
+│       ├── health.go       # /healthz endpoint
+│       └── render.go       # Template parsing and rendering helpers
 ├── templates/          # html/template views
-└── public/             # Static assets (stylesheets)
+├── public/             # Static assets (stylesheets)
+├── Dockerfile          # Multi-stage build producing a static binary image
+└── docker-compose.yml  # App plus MongoDB for local development
 ```
+
+`templates/` and `public/` stay at the root because they are read from disk at
+runtime, relative to the working directory — so the server is started from the
+repository root, and both trees are copied into the image alongside the binary.
+
+The dependency runs one way: `web` imports `models`, and `models` imports nothing
+of `web`. Keeping it that way is what lets the model tests run without an HTTP
+server and the handler tests without reaching into storage.
 
 ## Routes
 

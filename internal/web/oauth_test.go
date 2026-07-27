@@ -268,7 +268,7 @@ func TestSignInWithoutCredentialsReportsUnavailable(t *testing.T) {
 	requireMongo(t)
 
 	unconfigured := startServer(t, provider, Config{
-		PublicDir:      "../public",
+		PublicDir:      "../../public",
 		CSRFSecret:     "test-csrf-secret-32-bytes-long!!!",
 		SecureCookies:  false,
 		AuthRateLimit:  RateLimit{Every: time.Millisecond, Burst: 100000},
@@ -276,7 +276,7 @@ func TestSignInWithoutCredentialsReportsUnavailable(t *testing.T) {
 	})
 	// startServer fills in working credentials, so take them back out.
 	unconfigured.Config.Handler = Routes(Config{
-		PublicDir:      "../public",
+		PublicDir:      "../../public",
 		CSRFSecret:     "test-csrf-secret-32-bytes-long!!!",
 		SecureCookies:  false,
 		AuthRateLimit:  RateLimit{Every: time.Millisecond, Burst: 100000},

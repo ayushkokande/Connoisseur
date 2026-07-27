@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ayushkokande/Connoisseur/models"
+	"github.com/ayushkokande/Connoisseur/internal/models"
 )
 
 // A 404 is a page real visitors reach, so it should look like the rest of the
@@ -44,7 +44,7 @@ func TestThrottledResponseIsAStyledPage(t *testing.T) {
 	requireMongo(t)
 
 	strict := startServer(t, provider, Config{
-		PublicDir:      "../public",
+		PublicDir:      "../../public",
 		CSRFSecret:     "test-csrf-secret-32-bytes-long!!!",
 		SecureCookies:  false,
 		AuthRateLimit:  RateLimit{Every: 30 * time.Second, Burst: 1},

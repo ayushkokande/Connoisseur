@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/ayushkokande/Connoisseur/models"
+	"github.com/ayushkokande/Connoisseur/internal/models"
 )
 
 const healthPath = "/healthz"
