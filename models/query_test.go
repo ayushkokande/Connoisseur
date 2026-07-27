@@ -109,9 +109,9 @@ func TestSearchFilterEscapesRegexMetacharacters(t *testing.T) {
 	query := RestaurantQuery{Search: search}
 	query.Normalize()
 
-	clauses, ok := query.filter()["$or"].([]bson.M)
+	clauses, ok := query.filter(searchSubstring)["$or"].([]bson.M)
 	if !ok {
-		t.Fatalf("search filter has no $or clause: %#v", query.filter())
+		t.Fatalf("search filter has no $or clause: %#v", query.filter(searchSubstring))
 	}
 	if len(clauses) == 0 {
 		t.Fatal("search filter produced no $or clauses")
@@ -140,7 +140,7 @@ func TestFilterOmitsUnsetFields(t *testing.T) {
 	query := RestaurantQuery{}
 	query.Normalize()
 
-	if filter := query.filter(); len(filter) != 0 {
+	if filter := query.filter(searchSubstring); len(filter) != 0 {
 		t.Errorf("empty query produced filter %#v, want no conditions", filter)
 	}
 }
@@ -148,7 +148,7 @@ func TestFilterOmitsUnsetFields(t *testing.T) {
 func TestFilterMatchesCuisineAndPriceExactly(t *testing.T) {
 	query := RestaurantQuery{Cuisine: "Japanese", PriceRange: "$$"}
 	query.Normalize()
-	filter := query.filter()
+	filter := query.filter(searchSubstring)
 
 	if got := filter["cuisine"]; got != "Japanese" {
 		t.Errorf(`filter["cuisine"] = %v, want "Japanese"`, got)
