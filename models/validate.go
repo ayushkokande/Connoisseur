@@ -93,6 +93,13 @@ func validateCredentials(username, password string) error {
 	if !usernamePattern.MatchString(username) {
 		return invalid("Username may only contain letters, numbers and underscores.")
 	}
+	return validatePassword(password)
+}
+
+// validatePassword is separate from validateCredentials because changing a
+// password does not involve the username, and the rules must not drift apart
+// between the two paths.
+func validatePassword(password string) error {
 	// Length is counted in bytes: bcrypt's 72-byte cap is a byte limit, and a
 	// password of 72 multi-byte runes would be silently truncated otherwise.
 	if len(password) < minPasswordLen {

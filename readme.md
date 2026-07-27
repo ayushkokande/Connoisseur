@@ -36,6 +36,9 @@
   * Paginated results with shareable, filter-preserving URLs, and paginated
     reviews on each restaurant
 
+* Account management: change your password, or delete your account and leave
+  what you wrote credited to `[deleted_user]`
+
 * Flash messages responding to user interactions
 
 * Responsive web design with Bootstrap
@@ -210,6 +213,15 @@ are not logged, to keep frequent probes from burying everything else.
   loosely — twenty back to back, then one every three seconds. Nothing is being
   guessed there, so it only has to stop a script filling the listing. Reading is
   never throttled.
+* Changing a password requires the current one, so a stolen session cannot be
+  used to take an account over. It also raises a credential version stored in
+  the session, which signs out every session issued against the old password —
+  the reason for changing it after a compromise.
+* Deleting an account requires the password too. The restaurants and reviews it
+  wrote stay on the site, credited to `[deleted_user]`, so other people's reviews
+  of a restaurant do not disappear with whoever added it. That placeholder
+  contains brackets, which usernames may not, so no real account can be
+  registered under it.
 * Authentication takes the same time whether or not the username exists. The
   unknown-username path performs a bcrypt comparison against a fixed dummy hash
   and discards the result, so response timing cannot be used to enumerate
@@ -245,6 +257,7 @@ Connoisseur/
 │   ├── restaurants.go  # RESTful restaurant handlers
 │   ├── comments.go     # Nested review handlers
 │   ├── auth.go         # Landing, register, login, logout
+│   ├── account.go      # Password change and account deletion
 │   ├── middleware.go   # Auth & ownership middleware, method override
 │   ├── ratelimit.go    # Per-client token buckets for login and registration
 │   ├── clientip.go     # Client address resolution, trusted-proxy handling
@@ -292,6 +305,9 @@ Connoisseur/
 | `/register` | GET / POST | Sign-up form and handler |
 | `/login` | GET / POST | Login form and handler |
 | `/logout` | POST | Log out |
+| `/account` | GET | Account settings * |
+| `/account/password` | PUT | Change password * |
+| `/account` | DELETE | Delete account * |
 
 ### Operations
 
