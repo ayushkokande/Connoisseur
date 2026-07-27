@@ -274,6 +274,58 @@ use, so a throttling warning can be matched against the requests around it.
 * Pages are rendered into a buffer before anything is written, so a template
   failure becomes a `500` rather than a half-written page under a `200`.
 
+### The middleware chain
+
+`web.Routes` assembles one handler out of several layers. The order is
+load-bearing in most places, so it is worth reading before moving anything.
+
+```
+RequestLogger                     assigns the request ID, logs one line at the end
+└── SecurityHeaders               CSP + nonce, Referrer-Policy, nosniff, frame deny
+    └── root mux
+        ├── GET /healthz          stops here — never reaches CSRF
+        └── markPlaintext         only when serving plain HTTP
+            └── csrf.Protect      rejects state-changing requests without a token
+                └── MethodOverride        rewrites POST + _method into PUT/DELETE
+                    └── withCurrentUser   one memoised user lookup per request
+                        └── route mux     the route table
+                            └── rate limiter          on the routes that have one
+                                └── isLoggedIn / ownership check
+                                    └── handler
+```
+
+**Why each sits where it does**
+
+- **`RequestLogger` is outermost** so that everything gets logged, including
+  responses produced by CSRF rejections, the static file server and 404s — the
+  ones you most want a record of. It takes the trusted-proxy set so the address
+  it records is the visitor rather than the proxy.
+- **`SecurityHeaders` wraps everything below it** for the same reason: static
+  files and error responses carry the policy too, not just rendered pages. It
+  also mints the per-response nonce that the one inline script is authorised by.
+- **`/healthz` branches off above CSRF** so a probe polling every few seconds is
+  not handed a fresh CSRF cookie each time. `RequestLogger` drops successful
+  health checks separately, to keep them from burying everything else.
+- **`markPlaintext` is only added when cookies are not `Secure`.** Without it
+  `gorilla/csrf` assumes HTTPS and rejects the `http://` Origin a browser sends,
+  so every form submission fails in local development.
+- **`csrf.Protect` sits outside `MethodOverride`.** The override turns a POST
+  into a PUT or DELETE, and every one of those is state-changing, so the token is
+  required either way — checking first means the override cannot be used to slip
+  past it.
+- **`MethodOverride` runs before the mux** because the route table is keyed on
+  method, and HTML forms can only send GET and POST.
+- **`withCurrentUser` is innermost of the shared layers** so the lookup it
+  memoises is available to every handler and ownership check, while anonymous and
+  static requests never touch the database at all.
+
+**A consequence worth knowing:** the rate limiters live *inside* CSRF
+protection, so they only ever see requests carrying a valid token. That is fine —
+a request without one is rejected before it reaches a handler, so it costs
+nothing to refuse and is not a way in — but it does mean a client that never
+fetches a form is stopped by CSRF rather than by the limit, which is not obvious
+from reading the route table.
+
 ### Error pages
 
 404, 429 and the 500 from a failed render are served as ordinary pages inside the
