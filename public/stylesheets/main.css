@@ -30,3 +30,85 @@
 	max-height: 420px;
 	object-fit: cover;
 }
+
+/*
+ * Softer corners.
+ *
+ * Bootstrap 4 rounds by 0.25rem, which at this size reads as square. These
+ * override that for the components the templates actually use. Bootstrap is
+ * loaded from a CDN, so its Sass variables cannot be recompiled — the radius has
+ * to be restated here.
+ */
+:root {
+	--radius: 0.65rem;
+	--radius-sm: 0.45rem;
+}
+
+.card,
+.alert,
+.jumbotron,
+.filter-bar,
+.list-group,
+.form-control,
+.custom-select,
+.btn {
+	border-radius: var(--radius);
+}
+
+.btn-sm,
+.form-control-sm {
+	border-radius: var(--radius-sm);
+}
+
+/*
+ * An image at the top of a card is square by default, so rounding only the card
+ * leaves the picture's corners poking out over it. These have to track the card
+ * radius exactly, or the mismatch shows as a hairline at each corner.
+ */
+.card-img-top {
+	border-top-left-radius: var(--radius);
+	border-top-right-radius: var(--radius);
+}
+
+.card-img-bottom {
+	border-bottom-left-radius: var(--radius);
+	border-bottom-right-radius: var(--radius);
+}
+
+/* Same reasoning for a list group filling a card, and for its own end caps. */
+.list-group-item:first-child {
+	border-top-left-radius: var(--radius);
+	border-top-right-radius: var(--radius);
+}
+
+.list-group-item:last-child {
+	border-bottom-left-radius: var(--radius);
+	border-bottom-right-radius: var(--radius);
+}
+
+/*
+ * Pagination is a row of joined boxes: only the outer corners round, or every
+ * link becomes its own lozenge and the strip stops reading as one control.
+ */
+.page-item:first-child .page-link {
+	border-top-left-radius: var(--radius-sm);
+	border-bottom-left-radius: var(--radius-sm);
+}
+
+.page-item:last-child .page-link {
+	border-top-right-radius: var(--radius-sm);
+	border-bottom-right-radius: var(--radius-sm);
+}
+
+/*
+ * A hairline border reads as hard at this radius. A soft shadow carries the same
+ * separation from the page without the drawn edge.
+ */
+.card {
+	border-color: rgba(0, 0, 0, 0.06);
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.05);
+}
+
+.filter-bar {
+	border-color: rgba(0, 0, 0, 0.07);
+}
