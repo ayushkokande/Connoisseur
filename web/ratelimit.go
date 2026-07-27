@@ -123,11 +123,12 @@ func (l *rateLimiter) protect(next http.HandlerFunc) http.HandlerFunc {
 			"path", r.URL.Path,
 			"client_ip", client,
 		)
-		// A plain 429 rather than the usual flash and redirect: a redirect
-		// cannot carry the status or Retry-After, and both are what tells a
-		// client — or a proxy in front of this one — that it is being
-		// throttled rather than refused.
+		// A 429 rather than the usual flash and redirect: a redirect cannot
+		// carry the status or Retry-After, and both are what tells a client —
+		// or a proxy in front of this one — that it is being throttled rather
+		// than refused. Retry-After is set before the body, since writing the
+		// status sends the headers with it.
 		w.Header().Set("Retry-After", retryAfter)
-		http.Error(w, "Too many attempts. Please wait and try again.", http.StatusTooManyRequests)
+		RenderError(w, r, http.StatusTooManyRequests, "Too many attempts. Please wait and try again.")
 	}
 }

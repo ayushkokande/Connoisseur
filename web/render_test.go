@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -81,6 +82,10 @@ func TestTemplatesRender(t *testing.T) {
 			"Pages":      reviewPageLinks(restaurant.ID.Hex(), showReviews),
 			"PrevURL":    adjacentReviewURL(restaurant.ID.Hex(), showReviews, -1),
 			"NextURL":    adjacentReviewURL(restaurant.ID.Hex(), showReviews, 1),
+		},
+		"error": {
+			"Status":  http.StatusNotFound,
+			"Message": "That page does not exist.",
 		},
 		"restaurants/new":  nil,
 		"restaurants/edit": {"Restaurant": restaurant},

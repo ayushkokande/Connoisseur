@@ -81,7 +81,7 @@ func Routes(cfg Config) http.Handler {
 
 	// 404 for everything else
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "Error 404 - Page not found...", http.StatusNotFound)
+		RenderError(w, r, http.StatusNotFound, "That page does not exist.")
 	})
 
 	// MethodOverride runs inside CSRF protection: the override turns a POST into
