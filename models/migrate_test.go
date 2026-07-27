@@ -417,6 +417,14 @@ func TestMigrateOnADatabaseThatHasNeverBeenWrittenTo(t *testing.T) {
 			t.Fatalf("dropping %s: %v", name, err)
 		}
 	}
+	// Dropping a collection takes its indexes with it, including the ones Init
+	// creates. Put them back afterwards so this test does not leave the rest of
+	// the suite querying a collection that has lost them.
+	t.Cleanup(func() {
+		if err := Init(testDB); err != nil {
+			t.Fatalf("restoring indexes: %v", err)
+		}
+	})
 
 	if err := Migrate(ctx); err != nil {
 		t.Fatalf("migrating a database with no collections: %v", err)

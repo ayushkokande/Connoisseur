@@ -65,6 +65,9 @@ func requireMongo(t *testing.T) {
 			t.Fatalf("clearing %s: %v", name, err)
 		}
 	}
+	// The cuisine menu is cached, and clearing the collection behind its back
+	// would leave the next test reading the previous one's cuisines.
+	invalidateCuisines()
 
 	// Indexes outlive DeleteMany, and the unique ones are created by Migrate
 	// rather than Init. Dropping them gives each test the same starting point as

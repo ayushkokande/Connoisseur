@@ -7,3 +7,6 @@
 **/.DS_Store
 
 .env
+
+# Written by the coverage step in CI.
+coverage.out

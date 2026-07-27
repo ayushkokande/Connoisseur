@@ -2,12 +2,16 @@ package models
 
 import (
 	"context"
+	"errors"
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
+	"time"
 	"unicode/utf8"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
 
@@ -76,20 +80,40 @@ func (q RestaurantQuery) IsFiltered() bool {
 	return q.Search != "" || q.Cuisine != "" || q.PriceRange != "" || q.MinRating > 0
 }
 
-func (q RestaurantQuery) filter() bson.M {
+// searchMode selects how a search term is matched.
+type searchMode int
+
+const (
+	// searchWords matches whole words through the text index.
+	searchWords searchMode = iota
+	// searchSubstring matches anywhere within a field by scanning.
+	searchSubstring
+)
+
+func (q RestaurantQuery) filter(mode searchMode) bson.M {
 	filter := bson.M{}
 	if q.Search != "" {
-		// Substring matching, so a partial word like "trat" still finds
-		// "Trattoria". QuoteMeta is essential: without it the user's input is
-		// executed as a regular expression, which invites both errors and
-		// pathological backtracking. The tradeoff is that this cannot use an
-		// index and scans the collection; a text index would be faster but
-		// would only match whole words.
-		pattern := regexp.QuoteMeta(q.Search)
-		filter["$or"] = []bson.M{
-			{"name": bson.M{"$regex": pattern, "$options": "i"}},
-			{"cuisine": bson.M{"$regex": pattern, "$options": "i"}},
-			{"description": bson.M{"$regex": pattern, "$options": "i"}},
+		if mode == searchWords {
+			// Served by the text index rather than by scanning the collection.
+			// The term is passed through as typed, so the conventions people
+			// already expect from a search box work: a quoted run matches as a
+			// phrase, and a leading hyphen on a word excludes it. A hyphen
+			// inside a word is not exclusion — the tokenizer splits on it — so
+			// "gluten-free" searches for both words rather than against one.
+			filter["$text"] = bson.M{"$search": q.Search}
+		} else {
+			// Substring matching, so a partial word like "trat" still finds
+			// "Trattoria". QuoteMeta is essential: without it the user's input
+			// is executed as a regular expression, which invites both errors and
+			// pathological backtracking. This cannot use an index and scans the
+			// collection, which is why it is the fallback rather than the
+			// first attempt.
+			pattern := regexp.QuoteMeta(q.Search)
+			filter["$or"] = []bson.M{
+				{"name": bson.M{"$regex": pattern, "$options": "i"}},
+				{"cuisine": bson.M{"$regex": pattern, "$options": "i"}},
+				{"description": bson.M{"$regex": pattern, "$options": "i"}},
+			}
 		}
 	}
 	if q.Cuisine != "" {
@@ -144,9 +168,45 @@ func (p RestaurantPage) HasPrev() bool { return p.Page > 1 }
 func (p RestaurantPage) HasNext() bool { return p.Page < p.TotalPages }
 
 // FindRestaurants returns the page of restaurants matching q.
+//
+// A search is tried against the text index first and falls back to scanning
+// when that finds nothing, or when the index is not there to use. The index
+// matches whole words, so it answers most searches without reading the
+// collection, while a partial word like "trat" — which it cannot match — still
+// finds "Trattoria" through the scan. The fallback costs one indexed count on a
+// search that matches nothing, and saves a collection scan on every search that
+// does.
 func FindRestaurants(ctx context.Context, q RestaurantQuery) (*RestaurantPage, error) {
 	q.Normalize()
-	filter := q.filter()
+
+	mode := searchSubstring
+	if q.Search != "" {
+		mode = searchWords
+	}
+
+	page, err := q.findPage(ctx, mode)
+	if mode == searchWords {
+		// $text refuses to run at all without its index, where the scan needs
+		// nothing. Falling back on that keeps the index an optimization rather
+		// than a thing search breaks without.
+		var serverErr mongo.ServerError
+		if errors.As(err, &serverErr) && serverErr.HasErrorCode(indexNotFoundCode) {
+			return q.findPage(ctx, searchSubstring)
+		}
+		if err == nil && page.Total == 0 {
+			return q.findPage(ctx, searchSubstring)
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	return page, nil
+}
+
+// findPage runs the query with one search strategy. q is expected to be
+// normalized already.
+func (q RestaurantQuery) findPage(ctx context.Context, mode searchMode) (*RestaurantPage, error) {
+	filter := q.filter(mode)
 
 	total, err := restaurants.CountDocuments(ctx, filter)
 	if err != nil {
@@ -186,15 +246,57 @@ func FindRestaurants(ctx context.Context, q RestaurantQuery) (*RestaurantPage, e
 	}, nil
 }
 
+// cuisineCacheTTL bounds how long the filter menu can lag the data. Writes
+// invalidate the cache outright, so this only matters when another process made
+// the change.
+const cuisineCacheTTL = time.Minute
+
+var cuisineCache struct {
+	mu      sync.RWMutex
+	values  []string
+	expires time.Time
+}
+
+// invalidateCuisines drops the cached menu, so a restaurant added, retitled or
+// removed shows up in the filter immediately rather than at the next expiry.
+func invalidateCuisines() {
+	cuisineCache.mu.Lock()
+	cuisineCache.expires = time.Time{}
+	cuisineCache.mu.Unlock()
+}
+
 // DistinctCuisines lists the cuisines currently in use, sorted, for the filter
 // menu. Cuisine is free text, so the menu reflects what users have entered
 // rather than a fixed vocabulary.
+//
+// The result is cached because building it is a collection-wide distinct and
+// the restaurant index rendered one on every request. The rebuild deliberately
+// runs without holding the lock: a burst arriving exactly at expiry may issue a
+// few queries between them, which is still bounded by concurrency rather than
+// by traffic, and blocking every reader on one database round trip to avoid
+// that is the worse trade.
 func DistinctCuisines(ctx context.Context) ([]string, error) {
+	cuisineCache.mu.RLock()
+	cached, fresh := cuisineCache.values, time.Now().Before(cuisineCache.expires)
+	cuisineCache.mu.RUnlock()
+
+	if fresh {
+		// Copied, so a caller sorting or filtering the menu cannot reach into
+		// the cache and change what everyone else sees.
+		return slices.Clone(cached), nil
+	}
+
 	var values []string
 	if err := restaurants.Distinct(ctx, "cuisine", bson.M{}).Decode(&values); err != nil {
 		return nil, err
 	}
 	values = slices.DeleteFunc(values, func(s string) bool { return strings.TrimSpace(s) == "" })
 	slices.Sort(values)
-	return values, nil
+
+	cuisineCache.mu.Lock()
+	cuisineCache.values = values
+	cuisineCache.expires = time.Now().Add(cuisineCacheTTL)
+	cuisineCache.mu.Unlock()
+
+	return slices.Clone(values), nil
 }

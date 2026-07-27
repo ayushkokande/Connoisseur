@@ -7,6 +7,7 @@ import (
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
 
 var (
@@ -15,6 +16,9 @@ var (
 	restaurants *mongo.Collection
 	comments    *mongo.Collection
 )
+
+// searchIndexName is the text index backing restaurant search.
+const searchIndexName = "restaurant_search"
 
 // ErrNotInitialized is returned when the package is used before Init succeeds.
 var ErrNotInitialized = errors.New("models: database not initialized")
@@ -33,14 +37,26 @@ func Init(db *mongo.Database) error {
 	// created by Migrate: older data can hold names that collide once case is
 	// ignored, and those have to be settled before the index will build.
 
-	// These back the sort orders and filters on the restaurant index. The free
-	// text search is a substring regex and cannot use them.
+	// These back the sort orders and filters on the restaurant index, and the
+	// text index backs the search. A search is answered from the text index
+	// where it can be, and only falls back to a substring scan for the partial
+	// words the index cannot match.
 	if _, err := restaurants.Indexes().CreateMany(ctx, []mongo.IndexModel{
 		{Keys: bson.D{{Key: "createdAt", Value: -1}}},
 		{Keys: bson.D{{Key: "name", Value: 1}}},
 		{Keys: bson.D{{Key: "cuisine", Value: 1}}},
 		{Keys: bson.D{{Key: "priceRange", Value: 1}}},
 		{Keys: bson.D{{Key: "avgRating", Value: -1}}},
+		{
+			// A collection may only have one text index, so all three searched
+			// fields belong to this one.
+			Keys: bson.D{
+				{Key: "name", Value: "text"},
+				{Key: "cuisine", Value: "text"},
+				{Key: "description", Value: "text"},
+			},
+			Options: options.Index().SetName(searchIndexName),
+		},
 	}); err != nil {
 		return err
 	}

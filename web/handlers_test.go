@@ -92,10 +92,17 @@ func requireMongo(t *testing.T) {
 	}
 	// Each test starts from an empty database so ownership checks are unambiguous.
 	ctx := context.Background()
-	for _, name := range []string{"users", "restaurants", "comments"} {
-		if _, err := testDB.Collection(name).DeleteMany(ctx, map[string]any{}); err != nil {
-			t.Fatalf("clearing %s: %v", name, err)
-		}
+	if _, err := testDB.Collection("users").DeleteMany(ctx, map[string]any{}); err != nil {
+		t.Fatalf("clearing users: %v", err)
+	}
+	// Restaurants and comments go through the model layer rather than straight
+	// to the collection, so that clearing them also drops the cached cuisine
+	// menu the way deleting them through the application does.
+	if err := models.DeleteAllRestaurants(ctx); err != nil {
+		t.Fatalf("clearing restaurants: %v", err)
+	}
+	if err := models.DeleteAllComments(ctx); err != nil {
+		t.Fatalf("clearing comments: %v", err)
 	}
 }
 
