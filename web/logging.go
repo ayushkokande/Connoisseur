@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"time"
 )
 
@@ -68,7 +69,12 @@ func (s *statusRecorder) Write(b []byte) (int, error) {
 // logs one summary line once the handler returns. It belongs outermost in the
 // chain so that responses produced by CSRF rejections and the static file
 // server are logged too.
-func RequestLogger(next http.Handler) http.Handler {
+//
+// trusted is the same set the rate limiter uses, so the address logged is the
+// visitor rather than the proxy in front of them. Without it every line behind a
+// proxy reports one address, and a throttling warning — which does record the
+// resolved client — cannot be matched to the requests around it.
+func RequestLogger(trusted []netip.Prefix, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := newRequestID()
 		state := &requestState{method: r.Method}
@@ -99,7 +105,7 @@ func RequestLogger(next http.Handler) http.Handler {
 			"status", recorder.status,
 			"bytes", recorder.bytes,
 			"duration_ms", time.Since(start).Milliseconds(),
-			"remote_addr", r.RemoteAddr,
+			"client_ip", clientIP(r, trusted),
 		)
 	})
 }
