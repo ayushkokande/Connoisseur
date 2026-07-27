@@ -23,6 +23,9 @@
   * Reviews carry a one to five star rating, and each restaurant shows its
     average and review count
 
+  * One review per person per restaurant, editable afterwards, so a listing
+    cannot be pushed up the rankings by the same person reviewing repeatedly
+
 * Browse the directory:
 
   * Free text search across name, cuisine and description
@@ -30,7 +33,8 @@
   * Filter by cuisine, price range and minimum rating; sort by newest, oldest,
     name or top rated
 
-  * Paginated results with shareable, filter-preserving URLs
+  * Paginated results with shareable, filter-preserving URLs, and paginated
+    reviews on each restaurant
 
 * Flash messages responding to user interactions
 
@@ -92,6 +96,7 @@ a MongoDB already running on the host. Data persists in the `mongo-data` volume;
 | `LOG_LEVEL` | `debug`, `info`, `warn` or `error` | `info` |
 | `PORT` | Port the server listens on | `3000` |
 | `SEED_DB` | Set to `true` to reset and seed the database on startup | unset |
+| `TRUSTED_PROXIES` | Comma-separated CIDR blocks or addresses whose `X-Forwarded-For` is believed | unset |
 
 In development the two secrets are generated randomly at startup, which logs
 everyone out on restart but means no known key is ever baked into the source. In
@@ -100,6 +105,30 @@ production the server refuses to start without them.
 `APP_ENV=production` also marks the session and CSRF cookies `Secure`, so they
 are only sent over HTTPS — do not set it when serving plain HTTP or logging in
 will silently fail.
+
+#### Running behind a reverse proxy
+
+Rate limits are counted per client address. A request that arrives through a
+proxy carries the *proxy's* address, so if the app sits behind nginx, a load
+balancer or a platform router and `TRUSTED_PROXIES` is left unset, **every
+visitor shares one rate-limit budget** — a handful of failed logins from one
+person throttles everybody.
+
+Set it to the network the proxy connects from:
+
+```sh
+TRUSTED_PROXIES=10.0.0.0/8,172.16.0.0/12
+```
+
+`X-Forwarded-For` is then read, but only for connections that actually come from
+one of those networks, and only back as far as the last hop that is not itself
+trusted. Anything a client prepended to the header before that point is ignored.
+Leave the variable unset when the app is reached directly: believing the header
+unconditionally would let anyone hand themselves a fresh budget on every request
+just by varying it.
+
+Do not list a network that is not a proxy — anything on it could then claim to
+be any address it liked.
 
 ### Run the tests
 
@@ -118,7 +147,8 @@ docker run -d --name connoisseur-test-mongo -p 27017:27017 mongo:8
 ```
 
 GitHub Actions runs `gofmt`, `go vet`, `go test -race` against a MongoDB service
-container, and builds the Docker image on every push and pull request. See
+container, checks total coverage against a floor, and builds the Docker image on
+every push and pull request. See
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 
 ## Operations
@@ -164,6 +194,27 @@ are not logged, to keep frequent probes from burying everything else.
   password length, field lengths, an allowlisted price range, and image URLs
   restricted to absolute `http`/`https` (which rejects `javascript:` and
   `data:` URLs).
+* Usernames are unique regardless of case, so `Admin` and `admin` cannot be two
+  accounts. Reviews are attributed by display name, so allowing both would let
+  one account be mistaken for another.
+* Login and registration are rate limited per client address: eight attempts
+  back to back, then one every fifteen seconds. Exceeding it returns `429` with
+  `Retry-After`. The login form itself is not throttled, so a throttled visitor
+  can still come back. See [running behind a reverse proxy](#running-behind-a-reverse-proxy)
+  for the configuration this needs when the app is not reached directly.
+* Authentication takes the same time whether or not the username exists. The
+  unknown-username path performs a bcrypt comparison against a fixed dummy hash
+  and discards the result, so response timing cannot be used to enumerate
+  registered accounts.
+* Every response carries a content security policy naming exactly the sources
+  the templates use, with a per-response nonce for the one inline script.
+  Framing, plugins, outbound connections and rewriting the form target are all
+  refused. `Referrer-Policy`, `X-Content-Type-Options` and `X-Frame-Options` are
+  set too, and HSTS when `APP_ENV=production`.
+* A review may only be edited or deleted through the URL of the restaurant it
+  belongs to, not merely by its author.
+* Pages are rendered into a buffer before anything is written, so a template
+  failure becomes a `500` rather than a half-written page under a `200`.
 
 ## Project Structure
 
@@ -182,11 +233,14 @@ Connoisseur/
 │   ├── user.go         # User model (bcrypt registration/authentication)
 │   └── validate.go     # Input validation rules
 ├── web/
-│   ├── routes.go       # Route table, CSRF protection
+│   ├── routes.go       # Route table, handler config, CSRF protection
 │   ├── restaurants.go  # RESTful restaurant handlers
 │   ├── comments.go     # Nested review handlers
 │   ├── auth.go         # Landing, register, login, logout
 │   ├── middleware.go   # Auth & ownership middleware, method override
+│   ├── ratelimit.go    # Per-client token buckets for login and registration
+│   ├── clientip.go     # Client address resolution, trusted-proxy handling
+│   ├── headers.go      # Content security policy and other response headers
 │   ├── context.go      # Per-request user, restaurant and comment caching
 │   ├── pagination.go   # Page links and filter-preserving URLs
 │   ├── session.go      # Cookie sessions, current user, flash messages
@@ -216,7 +270,7 @@ Connoisseur/
 
 | Name | Path | Verb | Description |
 | --- | --- | --- | --- |
-| New | `/restaurants/:id/comments/new` | GET | Form to add a review * |
+| New | `/restaurants/:id/comments/new` | GET | Form to add a review; redirects to the visitor's existing review if they have one * |
 | Create | `/restaurants/:id/comments` | POST | Add a review * |
 | Edit | `/restaurants/:id/comments/:comment_id/edit` | GET | Form to edit a review ** |
 | Update | `/restaurants/:id/comments/:comment_id` | PUT | Update a review ** |
@@ -250,10 +304,20 @@ The index accepts these query parameters, all optional:
 | `sort` | Result order | `newest` (default), `rating`, `oldest`, `name` |
 | `page` | 1-based page number | defaults to `1`, clamped to the last page |
 
+A restaurant's own page takes `page` too, for its reviews.
+
 Unrecognized values are ignored rather than rejected, so a stale bookmark still
-returns results. Search is a case-insensitive substring match, so partial words
-work; the term is escaped before it reaches MongoDB, so regex metacharacters are
-matched literally.
+returns results.
+
+Search is answered from a MongoDB text index across name, cuisine and
+description, and falls back to a case-insensitive substring scan when the index
+matches nothing — so whole words are served from the index while a partial word
+like `trat` still finds `Trattoria`. The fallback also covers a database where
+the index has not been built, since `$text` refuses to run without it. Terms
+reach the index as typed, so a quoted run matches as a phrase and a leading
+hyphen excludes a word; a hyphen *inside* a word is not exclusion, because the
+tokenizer splits on it. On the substring path the term is escaped before it
+reaches MongoDB, so regex metacharacters are matched literally.
 
 HTML forms submit PUT/DELETE via a `_method` override parameter, mirroring the classic method-override pattern. Every non-GET request carries a CSRF token.
 
@@ -276,9 +340,16 @@ of review IDs. Adding a review is therefore a single insert that cannot
 half-succeed.
 
 Both of these differ from how the data used to be stored, so `models.Migrate`
-runs at startup, unrolling the old arrays onto the reviews, discarding reviews
-whose restaurant no longer exists, and computing summaries that were never
-there. It is idempotent and a no-op once applied, so it is safe on every boot.
+runs at startup: it unrolls the old arrays onto the reviews, discards reviews
+whose restaurant no longer exists, and computes summaries that were never there.
+It also settles the data that later rules made invalid — extra reviews by one
+author of one restaurant, and usernames that collide once case is ignored — and
+only then builds the unique indexes that enforce those rules. That ordering
+matters, because an index build against data still containing duplicates fails,
+and a failed build during startup takes the whole application down. Colliding
+users are renamed rather than deleted, since an account owns restaurants and
+reviews that deleting it would take with it. It is idempotent and a no-op once
+applied, so it is safe on every boot.
 Reviews written before ratings existed keep a rating of `0`: they still count as
 reviews and still display, but they are left out of the average, and a
 restaurant with nothing but those reads as "Not yet rated".
