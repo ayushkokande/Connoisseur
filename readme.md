@@ -39,8 +39,8 @@
   * Paginated results with shareable, filter-preserving URLs, and paginated
     reviews on each restaurant
 
-* Account management: change your password, or delete your account and leave
-  what you wrote credited to `[deleted_user]`
+* Account management: sign out of every session at once, or delete your account
+  and leave what you wrote credited to `[deleted_user]`
 
 * Flash messages responding to user interactions
 
@@ -204,13 +204,17 @@ Logs are structured via `log/slog` — human-readable text in development, JSON
 when `APP_ENV=production`:
 
 ```
-time=2026-07-26T20:32:23.671Z level=INFO msg=request request_id=6263cf74 method=GET path=/restaurants status=200 bytes=4085 duration_ms=1
+time=2026-07-27T09:32:23.671Z level=INFO msg=request request_id=6263cf74 method=GET path=/restaurants status=200 bytes=4085 duration_ms=1 client_ip=203.0.113.7
 ```
 
 Every request is assigned an ID that is returned in the `X-Request-Id` response
 header and attached to each log line emitted while handling it, so a
 user-reported failure can be traced back to its logs. Successful health checks
 are not logged, to keep frequent probes from burying everything else.
+
+`client_ip` is the visitor rather than the connection, so behind a proxy it means
+something. It is resolved from the same `TRUSTED_PROXIES` setting the rate limits
+use, so a throttling warning can be matched against the requests around it.
 
 ## Security
 
@@ -236,7 +240,7 @@ are not logged, to keep frequent probes from burying everything else.
   expires the cookie.
 * Logout is a POST, so it cannot be triggered by a cross-site link.
 * User input is validated in the model layer: username shape and length,
-  password length, field lengths, an allowlisted price range, and image URLs
+  field lengths, an allowlisted price range, and image URLs
   restricted to absolute `http`/`https` (which rejects `javascript:` and
   `data:` URLs).
 * Usernames are unique regardless of case, so `Admin` and `admin` cannot be two
@@ -270,6 +274,17 @@ are not logged, to keep frequent probes from burying everything else.
 * Pages are rendered into a buffer before anything is written, so a template
   failure becomes a `500` rather than a half-written page under a `200`.
 
+### Error pages
+
+404, 429 and the 500 from a failed render are served as ordinary pages inside the
+site layout, carrying the status they mean. The error page falls back to plain
+text if it cannot itself be rendered — the commonest caller is a handler whose
+own template just failed, so answering one render failure with another would
+loop.
+
+The static file handler still writes its own plain-text 404 for a missing
+stylesheet, which is not a page anyone browses to.
+
 ## Project Structure
 
 ```
@@ -284,7 +299,7 @@ Connoisseur/
 │   ├── restaurant.go   # Restaurant model (name, image, cuisine, price range, ...)
 │   ├── comment.go      # Review model (text plus a 1-5 star rating)
 │   ├── migrate.go      # Idempotent startup migration of pre-existing data
-│   ├── user.go         # User model (bcrypt registration/authentication)
+│   ├── user.go         # Accounts, keyed on the provider identity signed in with
 │   └── validate.go     # Input validation rules
 ├── web/
 │   ├── routes.go       # Route table, handler config, CSRF protection
@@ -293,7 +308,7 @@ Connoisseur/
 │   ├── auth.go         # Landing, sign-in page, logout
 │   ├── oauth.go        # The provider flow: state, PKCE, callback, identity
 │   ├── signup.go       # Choosing a username on a first sign-in
-│   ├── account.go      # Password change and account deletion
+│   ├── account.go      # Signing out everywhere, and account deletion
 │   ├── middleware.go   # Auth & ownership middleware, method override
 │   ├── ratelimit.go    # Per-client token buckets for login and registration
 │   ├── clientip.go     # Client address resolution, trusted-proxy handling
@@ -432,7 +447,8 @@ restaurant with nothing but those reads as "Not yet rated".
 * [mongo-go-driver](https://github.com/mongodb/mongo-go-driver)
 * [gorilla/sessions](https://github.com/gorilla/sessions)
 * [gorilla/csrf](https://github.com/gorilla/csrf)
-* [x/crypto/bcrypt](https://pkg.go.dev/golang.org/x/crypto/bcrypt)
+* [x/oauth2](https://pkg.go.dev/golang.org/x/oauth2)
+* [x/time/rate](https://pkg.go.dev/golang.org/x/time/rate)
 
 ## License
 
