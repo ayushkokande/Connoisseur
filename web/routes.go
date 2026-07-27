@@ -22,6 +22,9 @@ type Config struct {
 	// WriteRateLimit throttles creating restaurants and reviews per client
 	// address. The zero value applies DefaultWriteRateLimit.
 	WriteRateLimit RateLimit
+	// OAuth is the provider people sign in through. Without credentials, sign-in
+	// reports itself unavailable rather than half-working.
+	OAuth OAuthConfig
 	// TrustedProxies are the networks whose X-Forwarded-For header is believed
 	// when working out which client a request came from. Leave it empty when
 	// this server is reached directly. Setting it wrongly is not cosmetic:
@@ -36,9 +39,9 @@ type Config struct {
 func Routes(cfg Config) http.Handler {
 	mux := http.NewServeMux()
 
-	// Only the submissions are throttled, not the forms: fetching a login page
-	// costs nothing to serve and is not how a password is guessed.
-	auth := newRateLimiter(cfg.AuthRateLimit.orDefault(DefaultAuthRateLimit), cfg.TrustedProxies)
+	// The flow is throttled, not the page that links into it: serving the
+	// sign-in page costs nothing and is not how anything is attacked.
+	authLimit := newRateLimiter(cfg.AuthRateLimit.orDefault(DefaultAuthRateLimit), cfg.TrustedProxies)
 
 	// Creating content is throttled separately and far more loosely. Nothing is
 	// being guessed here, so the limit only has to be tight enough to stop a
@@ -46,19 +49,21 @@ func Routes(cfg Config) http.Handler {
 	// restaurants in a sitting unaffected.
 	write := newRateLimiter(cfg.WriteRateLimit.orDefault(DefaultWriteRateLimit), cfg.TrustedProxies)
 
-	// Auth
+	// Auth. Signing in is the provider's business; what is kept here is the
+	// session, the username someone picks on their first visit, and the way out.
+	signIn := &auth{oauth: cfg.OAuth}
 	mux.HandleFunc("GET /{$}", landing)
-	mux.HandleFunc("GET /register", registerForm)
-	mux.HandleFunc("POST /register", auth.protect(register))
 	mux.HandleFunc("GET /login", loginForm)
-	mux.HandleFunc("POST /login", auth.protect(login))
+	mux.HandleFunc("GET /auth/start", authLimit.protect(signIn.signInStart))
+	mux.HandleFunc("GET /auth/callback", authLimit.protect(signIn.signInCallback))
+	mux.HandleFunc("GET /signup", signIn.signUpForm)
+	mux.HandleFunc("POST /signup", authLimit.protect(signIn.signUpCreate))
 	mux.HandleFunc("POST /logout", logout)
 
-	// Account management. Both submissions check the account's password, so they
-	// draw on the auth limit rather than the write one.
+	// Account management.
 	mux.HandleFunc("GET /account", isLoggedIn(accountForm))
-	mux.HandleFunc("PUT /account/password", auth.protect(isLoggedIn(accountUpdatePassword)))
-	mux.HandleFunc("DELETE /account", auth.protect(isLoggedIn(accountDelete)))
+	mux.HandleFunc("POST /account/sessions", authLimit.protect(isLoggedIn(accountSignOutEverywhere)))
+	mux.HandleFunc("DELETE /account", authLimit.protect(isLoggedIn(accountDelete)))
 
 	// Restaurants
 	mux.HandleFunc("GET /restaurants", restaurantsIndex)

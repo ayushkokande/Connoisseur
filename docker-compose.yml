@@ -29,6 +29,11 @@ services:
       # Both are required once APP_ENV=production.
       SESSION_SECRET: ${SESSION_SECRET:-}
       CSRF_SECRET: ${CSRF_SECRET:-}
+      # Credentials for the Google client sign-in goes through. Without them the
+      # site runs but nobody can sign in.
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      OAUTH_REDIRECT_URL: ${OAUTH_REDIRECT_URL:-}
       # Networks whose X-Forwarded-For is believed, as CIDR blocks. Unset when
       # the app is reached directly. Set it to the reverse proxy's network when
       # one is in front, or every visitor shares one rate-limit budget.

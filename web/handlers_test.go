@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -28,9 +29,33 @@ import (
 
 var (
 	server         *httptest.Server
+	provider       *fakeProvider
 	mongoAvailable bool
 	testDB         *mongo.Database
 )
+
+// nextSubject hands out a fresh provider subject, so every account created by
+// the suite is a different person as far as sign-in is concerned.
+var nextSubject atomic.Int64
+
+func newSubject() string {
+	return "subject-" + strconv.FormatInt(nextSubject.Add(1), 10)
+}
+
+// startServer builds a test server whose OAuth redirect URL points back at
+// itself. The listener has to exist before the handler can be built, since the
+// redirect URL contains the address the provider will send the browser to.
+func startServer(t testing.TB, provider *fakeProvider, cfg Config) *httptest.Server {
+	srv := httptest.NewUnstartedServer(nil)
+	base := "http://" + srv.Listener.Addr().String()
+	cfg.OAuth = provider.config("test-client-id", base+"/auth/callback")
+	srv.Config.Handler = Routes(cfg)
+	srv.Start()
+	if t != nil {
+		t.Cleanup(srv.Close)
+	}
+	return srv
+}
 
 func TestMain(m *testing.M) {
 	// Request logging would otherwise interleave a line per request into the
@@ -62,17 +87,26 @@ func TestMain(m *testing.M) {
 		if err := InitTemplates("../templates"); err != nil {
 			panic(err)
 		}
-		server = httptest.NewServer(Routes(Config{
+		provider = &fakeProvider{
+			tokens:     map[string]identityClaims{},
+			challenges: map[string]string{},
+		}
+		providerMux := http.NewServeMux()
+		providerMux.HandleFunc("/auth", provider.authorize)
+		providerMux.HandleFunc("/token", provider.token)
+		providerMux.HandleFunc("/userinfo", provider.userinfo)
+		provider.server = httptest.NewServer(providerMux)
+
+		server = startServer(nil, provider, Config{
 			PublicDir:     "../public",
 			CSRFSecret:    "test-csrf-secret-32-bytes-long!!!",
 			SecureCookies: false,
-			// The suite registers and logs in dozens of times from one address,
-			// so the shared server gets a limit far looser than production's.
-			// The real limit is exercised by TestAuthRateLimitBlocksGuessing,
-			// which builds a server of its own.
+			// The suite signs in dozens of times from one address, so the shared
+			// server gets a limit far looser than production's. The real limit is
+			// exercised by tests that build a server of their own.
 			AuthRateLimit:  RateLimit{Every: time.Millisecond, Burst: 100000},
 			WriteRateLimit: RateLimit{Every: time.Millisecond, Burst: 100000},
-		}))
+		})
 	}
 
 	code := m.Run()
@@ -203,6 +237,35 @@ func (b *browser) postRaw(action string, form url.Values) *http.Response {
 	return resp
 }
 
+// deleteAccount submits the account page's deletion form with the given
+// confirmation text.
+func (b *browser) deleteAccount(confirmation string) {
+	b.t.Helper()
+	resp := b.post("/account", "/account?_method=DELETE", url.Values{
+		"username": {confirmation},
+	})
+	resp.Body.Close()
+}
+
+// currentSubject returns the provider subject of the account a browser is
+// signed in as, read back from the database by the displayed username.
+func currentSubject(t *testing.T, b *browser) string {
+	t.Helper()
+	body, _ := b.get("/account")
+	match := regexp.MustCompile(`Signed in as ([A-Za-z0-9_]+)`).FindStringSubmatch(body)
+	if match == nil {
+		t.Fatal("the browser is not signed in")
+	}
+
+	var user models.User
+	err := testDB.Collection("users").FindOne(context.Background(),
+		bson.M{"usernameLower": strings.ToLower(match[1])}).Decode(&user)
+	if err != nil {
+		t.Fatalf("loading the signed-in user: %v", err)
+	}
+	return user.Subject
+}
+
 func mustID(t *testing.T, hex string) bson.ObjectID {
 	t.Helper()
 	id, err := bson.ObjectIDFromHex(hex)
@@ -236,16 +299,37 @@ func readAll(t *testing.T, resp *http.Response) string {
 	return sb.String()
 }
 
-// register creates an account and leaves the browser logged in as that user.
+// signIn takes the browser through the whole sign-in flow as the given subject,
+// following the redirects a real browser would. It returns the path it lands on:
+// /restaurants for an identity that already has an account, /signup for one that
+// does not.
+func (b *browser) signIn(subject, email string) string {
+	b.t.Helper()
+	provider.signInAs(subject, email)
+
+	resp, err := b.client.Get(b.base + "/auth/start")
+	if err != nil {
+		b.t.Fatalf("starting sign-in: %v", err)
+	}
+	defer resp.Body.Close()
+	_ = readAll(b.t, resp)
+	return resp.Request.URL.Path
+}
+
+// register creates an account under a fresh identity and leaves the browser
+// signed in as it, which is what most tests want a user for.
 func (b *browser) register(username string) {
 	b.t.Helper()
-	resp := b.post("/register", "/register", url.Values{
-		"username": {username},
-		"password": {"correct-horse-battery"},
-	})
+
+	if landed := b.signIn(newSubject(), username+"@example.com"); landed != "/signup" {
+		b.t.Fatalf("a new identity landed on %s, want /signup", landed)
+	}
+
+	resp := b.post("/signup", "/signup", url.Values{"username": {username}})
 	defer resp.Body.Close()
 	if !strings.HasSuffix(resp.Request.URL.Path, "/restaurants") {
-		b.t.Fatalf("register %q did not land on /restaurants, got %s", username, resp.Request.URL.Path)
+		b.t.Fatalf("choosing the username %q did not land on /restaurants, got %s",
+			username, resp.Request.URL.Path)
 	}
 }
 
@@ -444,10 +528,15 @@ func TestOwnCommentCannotBeEditedThroughAnotherRestaurant(t *testing.T) {
 func TestAnonymousCannotCreateRestaurant(t *testing.T) {
 	requireMongo(t)
 
+	// Someone part-way through signing up has a session and a CSRF token but no
+	// account yet, which is the only anonymous state that can post at all. The
+	// request must still be refused on authentication.
 	anon := newBrowser(t)
-	// A logged-out visitor gets no /restaurants/new form, so take the token from
-	// the login page: the request must still be rejected on authentication.
-	resp := anon.post("/login", "/restaurants", url.Values{
+	if landed := anon.signIn(newSubject(), "halfway@example.com"); landed != "/signup" {
+		t.Fatalf("a new identity landed on %s, want /signup", landed)
+	}
+
+	resp := anon.post("/signup", "/restaurants", url.Values{
 		"name":        {"Ghost Bistro"},
 		"image":       {"https://example.com/ghost.jpg"},
 		"cuisine":     {"Italian"},
@@ -508,82 +597,54 @@ func TestRestaurantValidationRejectsBadInput(t *testing.T) {
 	}
 }
 
-func TestRegistrationValidationRejectsWeakCredentials(t *testing.T) {
+// The username someone picks on their first sign-in is the only thing they
+// supply about their account, so its rules have to hold at that step.
+func TestSignUpValidatesTheChosenUsername(t *testing.T) {
 	requireMongo(t)
 
-	cases := map[string]url.Values{
-		"short password":   {"username": {"validname"}, "password": {"short"}},
-		"short username":   {"username": {"ab"}, "password": {"correct-horse-battery"}},
-		"illegal username": {"username": {"bad name!"}, "password": {"correct-horse-battery"}},
-	}
-
-	for name, form := range cases {
-		t.Run(name, func(t *testing.T) {
+	for _, username := range []string{"ab", "bad name!", ""} {
+		t.Run(username, func(t *testing.T) {
 			b := newBrowser(t)
-			resp := b.post("/register", "/register", form)
+			if landed := b.signIn(newSubject(), "picky@example.com"); landed != "/signup" {
+				t.Fatalf("a new identity landed on %s, want /signup", landed)
+			}
+
+			resp := b.post("/signup", "/signup", url.Values{"username": {username}})
 			defer resp.Body.Close()
 
-			if resp.Request.URL.Path != "/register" {
-				t.Errorf("weak credentials (%s) were accepted, landed on %s", name, resp.Request.URL.Path)
+			if resp.Request.URL.Path != "/signup" {
+				t.Errorf("username %q was accepted, landing on %s", username, resp.Request.URL.Path)
 			}
 		})
 	}
 }
 
-func TestDuplicateUsernameIsRejected(t *testing.T) {
-	requireMongo(t)
-
-	first := newBrowser(t)
-	first.register("taken_name")
-
-	second := newBrowser(t)
-	resp := second.post("/register", "/register", url.Values{
-		"username": {"taken_name"},
-		"password": {"another-good-password"},
-	})
-	defer resp.Body.Close()
-
-	if resp.Request.URL.Path != "/register" {
-		t.Errorf("duplicate username was accepted, landed on %s", resp.Request.URL.Path)
-	}
-}
-
-// Capitalisation is not what makes an account distinct. Registering "Admin"
-// against an existing "admin" would otherwise produce a second account that
-// reads as the first everywhere a name is shown.
-func TestUsernameIsTakenRegardlessOfCase(t *testing.T) {
+// A name already taken has to be refused however it is capitalised, since
+// reviews are attributed by display name.
+func TestSignUpRefusesATakenUsername(t *testing.T) {
 	requireMongo(t)
 
 	first := newBrowser(t)
 	first.register("MixedName")
 
-	for _, variant := range []string{"mixedname", "MIXEDNAME"} {
+	for _, variant := range []string{"MixedName", "mixedname", "MIXEDNAME"} {
 		t.Run(variant, func(t *testing.T) {
 			b := newBrowser(t)
-			resp := b.post("/register", "/register", url.Values{
-				"username": {variant},
-				"password": {"another-good-password"},
-			})
+			if landed := b.signIn(newSubject(), "other@example.com"); landed != "/signup" {
+				t.Fatalf("a new identity landed on %s, want /signup", landed)
+			}
+
+			resp := b.post("/signup", "/signup", url.Values{"username": {variant}})
 			defer resp.Body.Close()
 
-			if resp.Request.URL.Path != "/register" {
-				t.Errorf("%q was accepted alongside MixedName, landed on %s", variant, resp.Request.URL.Path)
+			if resp.Request.URL.Path != "/signup" {
+				t.Errorf("%q was accepted alongside MixedName, landing on %s", variant, resp.Request.URL.Path)
 			}
 		})
 	}
 
-	// The original still logs in, under any capitalisation.
-	returning := newBrowser(t)
-	resp := returning.post("/login", "/login", url.Values{
-		"username": {"MIXEDNAME"},
-		"password": {"correct-horse-battery"},
-	})
-	defer resp.Body.Close()
-
-	if !strings.HasSuffix(resp.Request.URL.Path, "/restaurants") {
-		t.Errorf("logging in with different capitalisation landed on %s", resp.Request.URL.Path)
-	}
-	body, _ := returning.get("/restaurants")
+	// The original still shows the capitalisation it was created with.
+	body, _ := first.get("/restaurants")
 	if !strings.Contains(body, "MixedName") {
 		t.Error("the navbar does not show the capitalisation the account was created with")
 	}

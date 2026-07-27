@@ -1,8 +1,8 @@
 package web
 
 import (
-	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/ayushkokande/Connoisseur/models"
 )
@@ -11,56 +11,48 @@ func accountForm(w http.ResponseWriter, r *http.Request) {
 	render(w, r, "account/edit", nil)
 }
 
-func accountUpdatePassword(w http.ResponseWriter, r *http.Request) {
+// accountSignOutEverywhere invalidates every session issued for the account,
+// which is what someone reaches for when they think one has been taken. There
+// is no password to change any more, so this is the security action the account
+// page offers.
+func accountSignOutEverywhere(w http.ResponseWriter, r *http.Request) {
 	user := CurrentUser(r)
 
-	current := r.PostFormValue("current_password")
-	next := r.PostFormValue("new_password")
-
-	if next != r.PostFormValue("confirm_password") {
-		flash(w, r, "error", "The new passwords do not match.")
+	if err := models.SignOutEverywhere(r.Context(), user.ID); err != nil {
+		flashFailure(w, r, err, "signing out everywhere", "Something went wrong signing out your other sessions.")
 		http.Redirect(w, r, "/account", http.StatusFound)
 		return
 	}
 
-	err := models.ChangePassword(r.Context(), user.ID, current, next)
-	if errors.Is(err, models.ErrInvalidCredentials) {
-		flash(w, r, "error", "Your current password is incorrect.")
-		http.Redirect(w, r, "/account", http.StatusFound)
-		return
-	}
-	if err != nil {
-		flashFailure(w, r, err, "changing password", "Something went wrong changing your password.")
-		http.Redirect(w, r, "/account", http.StatusFound)
-		return
-	}
-
-	// The change invalidated every session issued against the old password,
-	// including this one, so this browser is logged back in rather than being
-	// turned out along with whoever else was holding one.
+	// This session was issued against the old version too, so it has just been
+	// invalidated along with the rest. Signing back in leaves the person who
+	// asked where they were, and everyone else out.
 	updated, err := models.FindUserByID(r.Context(), user.ID)
 	if err != nil {
 		logOut(w, r)
-		flash(w, r, "success", "Password changed. Please log in again.")
+		flash(w, r, "success", "Signed out everywhere. Please sign in again.")
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
 	logIn(w, r, updated)
 
-	flash(w, r, "success", "Password changed. Any other sessions have been signed out.")
+	flash(w, r, "success", "Signed out of every other session.")
 	http.Redirect(w, r, "/account", http.StatusFound)
 }
 
 func accountDelete(w http.ResponseWriter, r *http.Request) {
 	user := CurrentUser(r)
 
-	err := models.DeleteUser(r.Context(), user.ID, r.PostFormValue("password"))
-	if errors.Is(err, models.ErrInvalidCredentials) {
-		flash(w, r, "error", "Your password is incorrect, so the account was not deleted.")
+	// There is no password left to confirm with, so the account is named
+	// instead. It makes deleting a deliberate act rather than one button press,
+	// which is what matters for something irreversible.
+	if !strings.EqualFold(strings.TrimSpace(r.PostFormValue("username")), user.Username) {
+		flash(w, r, "error", "That is not your username, so the account was not deleted.")
 		http.Redirect(w, r, "/account", http.StatusFound)
 		return
 	}
-	if err != nil {
+
+	if err := models.DeleteUser(r.Context(), user.ID); err != nil {
 		flashFailure(w, r, err, "deleting account", "Something went wrong deleting your account.")
 		http.Redirect(w, r, "/account", http.StatusFound)
 		return

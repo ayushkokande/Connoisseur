@@ -166,41 +166,29 @@ func TestRateLimiterSeparatesClientsBehindAProxy(t *testing.T) {
 	}
 }
 
-// End to end: a password guesser gets a handful of tries against a real login
-// route and is then shut out, and the correct password does not get them in
-// while they are shut out either.
-func TestAuthRateLimitBlocksGuessing(t *testing.T) {
+// End to end: repeated sign-in attempts from one address are throttled, so the
+// provider is not used as a way to hammer this server.
+func TestAuthRateLimitThrottlesSignIn(t *testing.T) {
 	requireMongo(t)
 
 	const burst = 3
-	strict := httptest.NewServer(Routes(Config{
-		PublicDir:     "../public",
-		CSRFSecret:    "test-csrf-secret-32-bytes-long!!!",
-		SecureCookies: false,
-		AuthRateLimit: RateLimit{Every: time.Hour, Burst: burst},
-	}))
-	defer strict.Close()
+	strict := startServer(t, provider, Config{
+		PublicDir:      "../public",
+		CSRFSecret:     "test-csrf-secret-32-bytes-long!!!",
+		SecureCookies:  false,
+		AuthRateLimit:  RateLimit{Every: time.Hour, Burst: burst},
+		WriteRateLimit: RateLimit{Every: time.Millisecond, Burst: 100000},
+	})
 
-	victim := newBrowserAt(t, strict.URL)
-	victim.register("throttle_victim")
+	visitor := newBrowserAt(t, strict.URL)
 
-	// Registering spent one token, so the guesser starts from a clean address
-	// as far as this test is concerned — a separate browser, but the same
-	// address, which is exactly what the limit keys on.
-	guesser := newBrowserAt(t, strict.URL)
-
-	guess := func(password string) *http.Response {
-		return guesser.post("/login", "/login", url.Values{
-			"username": {"throttle_victim"},
-			"password": {password},
-		})
-	}
-
-	// The registration already took a token, so the remaining budget is one
-	// short of the burst.
 	throttledAt := 0
-	for attempt := 1; attempt <= burst+2; attempt++ {
-		resp := guess("wrong-guess-" + strconv.Itoa(attempt))
+	for attempt := 1; attempt <= burst+3; attempt++ {
+		provider.signInAs(newSubject(), "throttled@example.com")
+		resp, err := visitor.client.Get(strict.URL + "/auth/start")
+		if err != nil {
+			t.Fatalf("starting sign-in: %v", err)
+		}
 		status := resp.StatusCode
 		resp.Body.Close()
 		if status == http.StatusTooManyRequests {
@@ -210,20 +198,11 @@ func TestAuthRateLimitBlocksGuessing(t *testing.T) {
 	}
 
 	if throttledAt == 0 {
-		t.Fatalf("%d guesses all went through, want throttling within the burst of %d",
-			burst+2, burst)
+		t.Fatalf("%d sign-in attempts all went through, want throttling within the burst of %d",
+			burst+3, burst)
 	}
-	if throttledAt > burst {
-		t.Errorf("throttling only began at guess %d, want no later than %d", throttledAt, burst)
-	}
-
-	// Still throttled, so even the right password is refused rather than
-	// letting a guesser slip through on the attempt that happens to be correct.
-	resp := guess("correct-horse-battery")
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusTooManyRequests {
-		t.Errorf("the correct password returned %d while throttled, want %d",
-			resp.StatusCode, http.StatusTooManyRequests)
+	if throttledAt > burst+1 {
+		t.Errorf("throttling only began at attempt %d, want no later than %d", throttledAt, burst+1)
 	}
 }
 
@@ -234,14 +213,13 @@ func TestWriteRateLimitBoundsContentCreation(t *testing.T) {
 	requireMongo(t)
 
 	const burst = 3
-	strict := httptest.NewServer(Routes(Config{
+	strict := startServer(t, provider, Config{
 		PublicDir:      "../public",
 		CSRFSecret:     "test-csrf-secret-32-bytes-long!!!",
 		SecureCookies:  false,
 		AuthRateLimit:  RateLimit{Every: time.Millisecond, Burst: 100000},
 		WriteRateLimit: RateLimit{Every: time.Hour, Burst: burst},
-	}))
-	defer strict.Close()
+	})
 
 	spammer := newBrowserAt(t, strict.URL)
 	spammer.register("write_spammer")
@@ -284,14 +262,13 @@ func TestWriteRateLimitBoundsContentCreation(t *testing.T) {
 func TestWriteRateLimitLeavesReadsAlone(t *testing.T) {
 	requireMongo(t)
 
-	strict := httptest.NewServer(Routes(Config{
+	strict := startServer(t, provider, Config{
 		PublicDir:      "../public",
 		CSRFSecret:     "test-csrf-secret-32-bytes-long!!!",
 		SecureCookies:  false,
 		AuthRateLimit:  RateLimit{Every: time.Millisecond, Burst: 100000},
 		WriteRateLimit: RateLimit{Every: time.Hour, Burst: 1},
-	}))
-	defer strict.Close()
+	})
 
 	writer := newBrowserAt(t, strict.URL)
 	writer.register("write_reader")
@@ -315,32 +292,33 @@ func TestWriteRateLimitLeavesReadsAlone(t *testing.T) {
 	}
 }
 
-// Fetching the login form is not an attempt at anything and must stay
-// available, or a throttled visitor could never come back and log in properly.
+// Fetching the sign-in page is not an attempt at anything and must stay
+// available, or a throttled visitor could never come back and sign in properly.
 func TestAuthRateLimitLeavesTheFormReachable(t *testing.T) {
 	requireMongo(t)
 
-	strict := httptest.NewServer(Routes(Config{
-		PublicDir:     "../public",
-		CSRFSecret:    "test-csrf-secret-32-bytes-long!!!",
-		SecureCookies: false,
-		AuthRateLimit: RateLimit{Every: time.Hour, Burst: 1},
-	}))
-	defer strict.Close()
+	strict := startServer(t, provider, Config{
+		PublicDir:      "../public",
+		CSRFSecret:     "test-csrf-secret-32-bytes-long!!!",
+		SecureCookies:  false,
+		AuthRateLimit:  RateLimit{Every: time.Hour, Burst: 1},
+		WriteRateLimit: RateLimit{Every: time.Millisecond, Burst: 100000},
+	})
 
 	visitor := newBrowserAt(t, strict.URL)
 	for range 5 {
-		resp := visitor.post("/login", "/login", url.Values{
-			"username": {"nobody_at_all"},
-			"password": {"whatever-it-is"},
-		})
+		provider.signInAs(newSubject(), "reachable@example.com")
+		resp, err := visitor.client.Get(strict.URL + "/auth/start")
+		if err != nil {
+			t.Fatal(err)
+		}
 		resp.Body.Close()
 	}
 
 	resp := visitor.getResponse("/login")
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		t.Errorf("the login form returned %d after throttling, want %d",
+		t.Errorf("the sign-in page returned %d after throttling, want %d",
 			resp.StatusCode, http.StatusOK)
 	}
 }

@@ -92,9 +92,9 @@ func lookupUser(r *http.Request) *models.User {
 	if err != nil {
 		return nil
 	}
-	// A session issued before the password changed is no longer valid, which is
-	// what makes changing a password remove whoever else was holding one. The
-	// comparison is free: the user has already been loaded.
+	// A session issued before the account signed out everywhere is no longer
+	// valid, which is what makes that action remove whoever else was holding
+	// one. The comparison is free: the user has already been loaded.
 	if version, _ := session.Values["credentialVersion"].(int); version != user.CredentialVersion {
 		return nil
 	}

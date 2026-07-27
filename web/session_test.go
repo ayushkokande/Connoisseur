@@ -76,7 +76,9 @@ func TestSessionCookieDoesNotExposeTheUserID(t *testing.T) {
 	visitor := newBrowser(t)
 	visitor.register("session_subject")
 
-	user, err := models.AuthenticateUser(context.Background(), "session_subject", "correct-horse-battery")
+	user, err := models.FindUserByIdentity(context.Background(), models.Identity{
+		Provider: "test", Subject: currentSubject(t, visitor),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

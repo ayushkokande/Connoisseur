@@ -18,10 +18,11 @@ type RateLimit struct {
 	Burst int
 }
 
-// DefaultAuthRateLimit throttles login and registration. Eight attempts back to
-// back leaves room for someone mistyping a password, while the refill holds a
-// sustained attack to four attempts a minute, which is slow enough that
-// guessing even a weak password is impractical.
+// DefaultAuthRateLimit throttles the sign-in flow and the account actions that
+// go with it. Eight attempts back to back leaves room for someone bouncing off
+// the provider and trying again, while the refill holds a script to four a
+// minute — enough to stop this server being used to hammer the provider, or its
+// callback being probed in bulk.
 var DefaultAuthRateLimit = RateLimit{Every: 15 * time.Second, Burst: 8}
 
 // DefaultWriteRateLimit throttles creating restaurants and reviews. It is far
