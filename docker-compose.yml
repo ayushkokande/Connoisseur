@@ -29,6 +29,10 @@ services:
       # Both are required once APP_ENV=production.
       SESSION_SECRET: ${SESSION_SECRET:-}
       CSRF_SECRET: ${CSRF_SECRET:-}
+      # Networks whose X-Forwarded-For is believed, as CIDR blocks. Unset when
+      # the app is reached directly. Set it to the reverse proxy's network when
+      # one is in front, or every visitor shares one rate-limit budget.
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
       SEED_DB: ${SEED_DB:-false}
     depends_on:
       mongo:
