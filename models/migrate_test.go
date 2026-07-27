@@ -225,14 +225,32 @@ func TestMigrateKeepsOneAuthorsReviewsOfDifferentRestaurants(t *testing.T) {
 }
 
 // insertLegacyUser writes a user in the pre-migration shape: a raw username and
-// no lowercased form.
+// no lowercased form. It carries an identity, so the migration keeps it rather
+// than removing it as a password account.
 func insertLegacyUser(t *testing.T, username string) bson.ObjectID {
 	t.Helper()
 	id := bson.NewObjectID()
 	if _, err := users.InsertOne(context.Background(), bson.M{
-		"_id":          id,
-		"username":     username,
-		"passwordHash": []byte("not a real hash"),
+		"_id":      id,
+		"username": username,
+		"provider": "test",
+		"subject":  id.Hex(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+// insertPasswordUser writes a user from before sign-in moved to a provider:
+// a password hash and no identity at all.
+func insertPasswordUser(t *testing.T, username string) bson.ObjectID {
+	t.Helper()
+	id := bson.NewObjectID()
+	if _, err := users.InsertOne(context.Background(), bson.M{
+		"_id":           id,
+		"username":      username,
+		"usernameLower": normalizeUsername(username),
+		"passwordHash":  []byte("not a real hash"),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -295,8 +313,8 @@ func TestMigrateRenamesUsernamesCollidingOnCase(t *testing.T) {
 
 	// Having settled the collisions, the migration should have installed the
 	// index that stops them recurring.
-	if _, err := RegisterUser(ctx, "aDmIn", "correct-horse-battery"); !errors.Is(err, ErrUsernameTaken) {
-		t.Errorf("registering a colliding name returned %v, want ErrUsernameTaken", err)
+	if _, err := CreateUser(ctx, Identity{Provider: "test", Subject: "post-migration"}, "aDmIn"); !errors.Is(err, ErrUsernameTaken) {
+		t.Errorf("claiming a colliding name returned %v, want ErrUsernameTaken", err)
 	}
 }
 
@@ -431,10 +449,10 @@ func TestMigrateOnADatabaseThatHasNeverBeenWrittenTo(t *testing.T) {
 	}
 
 	// The rules still have to end up enforced.
-	if _, err := RegisterUser(ctx, "FirstEver", "correct-horse-battery"); err != nil {
-		t.Fatalf("registering after the first migration: %v", err)
+	if _, err := CreateUser(ctx, Identity{Provider: "test", Subject: "first"}, "FirstEver"); err != nil {
+		t.Fatalf("creating an account after the first migration: %v", err)
 	}
-	if _, err := RegisterUser(ctx, "firstever", "another-good-password"); !errors.Is(err, ErrUsernameTaken) {
+	if _, err := CreateUser(ctx, Identity{Provider: "test", Subject: "second"}, "firstever"); !errors.Is(err, ErrUsernameTaken) {
 		t.Errorf("the unique username index was not installed: got %v", err)
 	}
 }
@@ -475,5 +493,51 @@ func TestMigrateOnEmptyDatabase(t *testing.T) {
 
 	if err := Migrate(context.Background()); err != nil {
 		t.Fatalf("migrating an empty database: %v", err)
+	}
+}
+
+// Sign-in no longer involves a password, and nothing links an account left over
+// from when it did to an identity at a provider: no email was ever stored. Such
+// accounts are removed rather than left as ones nobody can reach.
+func TestMigrateRemovesPasswordAccounts(t *testing.T) {
+	requireMongo(t)
+	ctx := context.Background()
+
+	stale := insertPasswordUser(t, "old_timer")
+	kept := insertLegacyUser(t, "provider_user")
+
+	// The password account wrote something, which has to survive it.
+	restaurantID := bson.NewObjectID()
+	if _, err := restaurants.InsertOne(ctx, bson.M{
+		"_id":         restaurantID,
+		"name":        "Legacy Owner Bistro",
+		"image":       "https://example.com/a.jpg",
+		"cuisine":     "Italian",
+		"priceRange":  "$$",
+		"description": "Added before sign-in moved.",
+		"createdAt":   time.Now(),
+		"author":      bson.M{"id": stale, "username": "old_timer"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Migrate(ctx); err != nil {
+		t.Fatalf("migrating: %v", err)
+	}
+
+	if _, err := FindUserByID(ctx, stale); err == nil {
+		t.Error("the password account survived the migration")
+	}
+	if _, err := FindUserByID(ctx, kept); err != nil {
+		t.Errorf("an account with an identity was removed too: %v", err)
+	}
+
+	// What it wrote stays, under the placeholder.
+	restaurant, err := FindRestaurantByID(ctx, restaurantID)
+	if err != nil {
+		t.Fatalf("the restaurant should still exist: %v", err)
+	}
+	if restaurant.Author.Username != DeletedUsername {
+		t.Errorf("the restaurant credits %q, want %q", restaurant.Author.Username, DeletedUsername)
 	}
 }

@@ -4,7 +4,6 @@ import (
 	"html/template"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -44,14 +43,13 @@ func TestNotFoundIsAStyledPage(t *testing.T) {
 func TestThrottledResponseIsAStyledPage(t *testing.T) {
 	requireMongo(t)
 
-	strict := httptest.NewServer(Routes(Config{
+	strict := startServer(t, provider, Config{
 		PublicDir:      "../public",
 		CSRFSecret:     "test-csrf-secret-32-bytes-long!!!",
 		SecureCookies:  false,
 		AuthRateLimit:  RateLimit{Every: 30 * time.Second, Burst: 1},
 		WriteRateLimit: RateLimit{Every: time.Millisecond, Burst: 100000},
-	}))
-	defer strict.Close()
+	})
 
 	visitor := newBrowserAt(t, strict.URL)
 	var resp *http.Response
@@ -59,10 +57,12 @@ func TestThrottledResponseIsAStyledPage(t *testing.T) {
 		if resp != nil {
 			resp.Body.Close()
 		}
-		resp = visitor.post("/login", "/login", url.Values{
-			"username": {"nobody_at_all"},
-			"password": {"whatever-it-is"},
-		})
+		provider.signInAs(newSubject(), "throttled@example.com")
+		var err error
+		resp, err = visitor.client.Get(strict.URL + "/auth/start")
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 	defer resp.Body.Close()
 

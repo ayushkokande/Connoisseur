@@ -60,9 +60,9 @@ func TestTemplatesRender(t *testing.T) {
 	}
 
 	pageData := map[string]map[string]any{
-		"landing":       nil,
-		"auth/login":    nil,
-		"auth/register": nil,
+		"landing":     nil,
+		"auth/login":  nil,
+		"auth/signup": {"Email": "someone@example.com"},
 		"restaurants/index": {
 			"Results":       indexResults,
 			"Query":         indexQuery,

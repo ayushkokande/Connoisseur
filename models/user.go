@@ -7,24 +7,39 @@ import (
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo"
-	"golang.org/x/crypto/bcrypt"
 )
 
 type User struct {
 	ID       bson.ObjectID `bson:"_id,omitempty"`
 	Username string        `bson:"username"`
-	// UsernameLower is what uniqueness is enforced on and what logging in looks
-	// up by, so that a name cannot be claimed twice in different cases and
-	// nobody has to remember how they capitalised it. Username keeps the
-	// capitalisation they chose, which is what gets displayed.
+	// UsernameLower is what uniqueness is enforced on, so that a name cannot be
+	// claimed twice in different cases. Username keeps the capitalisation the
+	// person chose, which is what gets displayed.
 	UsernameLower string `bson:"usernameLower"`
-	PasswordHash  []byte `bson:"passwordHash"`
-	// CredentialVersion rises whenever the password changes. A session records
-	// the version it was issued against, so changing a password invalidates the
-	// sessions held anywhere else — which is the whole point of changing it
-	// after a compromise. Checking it costs nothing extra: the user is already
-	// loaded once per request.
+
+	// Provider and Subject are the identity signed in with. Subject is the
+	// provider's own immutable identifier for the account — not the email, which
+	// people change and providers reassign. Together they are what a sign-in
+	// looks up by, and what uniqueness of an identity is enforced on.
+	Provider string `bson:"provider"`
+	Subject  string `bson:"subject"`
+	// Email is kept for support and for telling two accounts apart by hand. It
+	// is deliberately not used to find an account: a provider that let an
+	// address be reassigned would otherwise hand over somebody else's account.
+	Email string `bson:"email"`
+
+	// CredentialVersion rises when the account signs out everywhere. A session
+	// records the version it was issued against, so raising it invalidates every
+	// session already handed out. Checking it costs nothing extra: the user is
+	// already loaded once per request.
 	CredentialVersion int `bson:"credentialVersion"`
+}
+
+// Identity is who a provider says is signing in.
+type Identity struct {
+	Provider string
+	Subject  string
+	Email    string
 }
 
 // DeletedUsername replaces the name on content whose author has deleted their
@@ -39,27 +54,69 @@ func normalizeUsername(username string) string {
 }
 
 var (
-	ErrUsernameTaken      = errors.New("a user with the given username is already registered")
-	ErrInvalidCredentials = errors.New("username or password is incorrect")
+	ErrUsernameTaken = errors.New("that username is already taken")
+	// ErrNoSuchUser is returned when an identity has never signed in before, so
+	// the caller knows to ask for a username rather than to fail.
+	ErrNoSuchUser = errors.New("no account for that identity")
 )
 
-// RegisterUser validates the credentials, hashes the password and creates the user.
-func RegisterUser(ctx context.Context, username, password string) (*User, error) {
-	if err := validateCredentials(username, password); err != nil {
-		return nil, err
+// FindUserByIdentity returns the account an identity signs in to, or
+// ErrNoSuchUser when it has never signed in before.
+func FindUserByIdentity(ctx context.Context, identity Identity) (*User, error) {
+	var user User
+	err := users.FindOne(ctx, bson.M{
+		"provider": identity.Provider,
+		"subject":  identity.Subject,
+	}).Decode(&user)
+
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return nil, ErrNoSuchUser
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		return nil, err
 	}
+
+	// The address on file follows the provider, so support is not looking at a
+	// value that stopped being true years ago. It identifies nothing, so
+	// changing it grants nothing.
+	if identity.Email != "" && identity.Email != user.Email {
+		if _, err := users.UpdateOne(ctx,
+			bson.M{"_id": user.ID},
+			bson.M{"$set": bson.M{"email": identity.Email}},
+		); err != nil {
+			return nil, err
+		}
+		user.Email = identity.Email
+	}
+	return &user, nil
+}
+
+// CreateUser registers a new account for an identity under a chosen username.
+//
+// Both uniqueness rules are enforced by indexes rather than by looking first,
+// so two sign-ins racing on the same name — or the same identity submitting the
+// form twice — cannot both pass a check and then both insert.
+func CreateUser(ctx context.Context, identity Identity, username string) (*User, error) {
+	if err := validateUsername(username); err != nil {
+		return nil, err
+	}
+
 	user := &User{
 		ID:            bson.NewObjectID(),
 		Username:      username,
 		UsernameLower: normalizeUsername(username),
-		PasswordHash:  hash,
+		Provider:      identity.Provider,
+		Subject:       identity.Subject,
+		Email:         identity.Email,
 	}
 	if _, err := users.InsertOne(ctx, user); err != nil {
 		if mongo.IsDuplicateKeyError(err) {
+			// Either the name went in the meantime or this identity already has
+			// an account. The second case is the double submission, so hand back
+			// the account rather than an error.
+			if existing, findErr := FindUserByIdentity(ctx, identity); findErr == nil {
+				return existing, nil
+			}
 			return nil, ErrUsernameTaken
 		}
 		return nil, err
@@ -67,77 +124,18 @@ func RegisterUser(ctx context.Context, username, password string) (*User, error)
 	return user, nil
 }
 
-// dummyPasswordHash is compared against when the username does not exist, so
-// that authentication costs the same whether or not it does. Without it the
-// unknown-username path skips bcrypt and returns in microseconds while a known
-// username spends tens of milliseconds hashing, which is a reliable oracle for
-// enumerating registered accounts.
-//
-// It hashes a random string that was thrown away, and the result of comparing
-// against it is discarded regardless, so there is no harm in it being public.
-// Its cost has to track bcrypt.DefaultCost for the timings to match, which
-// TestDummyHashMatchesDefaultCost checks.
-const dummyPasswordHash = "$2a$10$AQVY8W1rx8ACRtIPf3fjw.zpcBazg0KIq/831nozdLBhpgB5YAmRi"
-
-// AuthenticateUser checks the username/password pair.
-func AuthenticateUser(ctx context.Context, username, password string) (*User, error) {
-	var user User
-	err := users.FindOne(ctx, bson.M{"usernameLower": normalizeUsername(username)}).Decode(&user)
-	if err != nil {
-		if errors.Is(err, mongo.ErrNoDocuments) {
-			// Hash anyway, so that the reply takes as long as a real check.
-			bcrypt.CompareHashAndPassword([]byte(dummyPasswordHash), []byte(password))
-			return nil, ErrInvalidCredentials
-		}
-		return nil, err
-	}
-	if bcrypt.CompareHashAndPassword(user.PasswordHash, []byte(password)) != nil {
-		return nil, ErrInvalidCredentials
-	}
-	return &user, nil
-}
-
-// ChangePassword replaces a user's password, given their current one. Requiring
-// the current password means a stolen session cannot be used to take the account
-// over outright.
-func ChangePassword(ctx context.Context, id bson.ObjectID, current, next string) error {
-	user, err := FindUserByID(ctx, id)
-	if err != nil {
-		return err
-	}
-	if bcrypt.CompareHashAndPassword(user.PasswordHash, []byte(current)) != nil {
-		return ErrInvalidCredentials
-	}
-	if err := validatePassword(next); err != nil {
-		return err
-	}
-
-	hash, err := bcrypt.GenerateFromPassword([]byte(next), bcrypt.DefaultCost)
-	if err != nil {
-		return err
-	}
-	// Raising the version in the same write logs out every other session, so a
-	// password changed because someone else had it actually removes them.
-	_, err = users.UpdateOne(ctx,
+// SignOutEverywhere invalidates every session already issued for an account,
+// which is what someone reaches for when they think a session has been taken.
+func SignOutEverywhere(ctx context.Context, id bson.ObjectID) error {
+	_, err := users.UpdateOne(ctx,
 		bson.M{"_id": id},
-		bson.M{
-			"$set": bson.M{"passwordHash": hash},
-			"$inc": bson.M{"credentialVersion": 1},
-		})
+		bson.M{"$inc": bson.M{"credentialVersion": 1}})
 	return err
 }
 
-// DeleteUser removes an account, given its password, and leaves the restaurants
-// and reviews it wrote credited to DeletedUsername.
-func DeleteUser(ctx context.Context, id bson.ObjectID, password string) error {
-	user, err := FindUserByID(ctx, id)
-	if err != nil {
-		return err
-	}
-	if bcrypt.CompareHashAndPassword(user.PasswordHash, []byte(password)) != nil {
-		return ErrInvalidCredentials
-	}
-
+// DeleteUser removes an account and leaves the restaurants and reviews it wrote
+// credited to DeletedUsername.
+func DeleteUser(ctx context.Context, id bson.ObjectID) error {
 	// The content is renamed before the account goes, and the order is not
 	// arbitrary. Deleting first would free the username for anyone to register
 	// while their name still sat on the old content, so whoever took it next
@@ -147,7 +145,7 @@ func DeleteUser(ctx context.Context, id bson.ObjectID, password string) error {
 		return err
 	}
 
-	_, err = users.DeleteOne(ctx, bson.M{"_id": id})
+	_, err := users.DeleteOne(ctx, bson.M{"_id": id})
 	return err
 }
 

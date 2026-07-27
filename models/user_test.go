@@ -4,53 +4,68 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
-
-	"golang.org/x/crypto/bcrypt"
 )
 
-// The dummy hash only disguises the timing of an unknown username if it costs
-// the same to check as a real one, and bcrypt bakes its cost into the hash. If
-// bcrypt.DefaultCost ever moves, the constant has to be regenerated.
-func TestDummyHashMatchesDefaultCost(t *testing.T) {
-	cost, err := bcrypt.Cost([]byte(dummyPasswordHash))
-	if err != nil {
-		t.Fatalf("the dummy hash is not a valid bcrypt hash: %v", err)
-	}
-	if cost != bcrypt.DefaultCost {
-		t.Errorf("the dummy hash costs %d, want %d; regenerate it", cost, bcrypt.DefaultCost)
-	}
-}
-
-func TestAuthenticateUser(t *testing.T) {
+// An identity that has signed in before reaches its own account, and one that
+// has not is reported as new so the caller knows to ask for a username.
+func TestFindUserByIdentity(t *testing.T) {
 	requireMongo(t)
+	requireUniqueIdentityIndex(t)
 	ctx := context.Background()
 
-	if _, err := RegisterUser(ctx, "auth_subject", "correct-horse-battery"); err != nil {
+	identity := Identity{Provider: "test", Subject: "subject-1", Email: "someone@example.com"}
+	created, err := CreateUser(ctx, identity, "identity_subject")
+	if err != nil {
 		t.Fatal(err)
 	}
 
-	t.Run("correct credentials", func(t *testing.T) {
-		user, err := AuthenticateUser(ctx, "auth_subject", "correct-horse-battery")
-		if err != nil {
-			t.Fatalf("authenticating with the right password: %v", err)
-		}
-		if user.Username != "auth_subject" {
-			t.Errorf("authenticated as %q, want %q", user.Username, "auth_subject")
-		}
-	})
+	found, err := FindUserByIdentity(ctx, identity)
+	if err != nil {
+		t.Fatalf("finding a known identity: %v", err)
+	}
+	if found.ID != created.ID {
+		t.Error("a known identity reached a different account")
+	}
 
-	t.Run("wrong password", func(t *testing.T) {
-		if _, err := AuthenticateUser(ctx, "auth_subject", "not-the-password"); !errors.Is(err, ErrInvalidCredentials) {
-			t.Errorf("got %v, want ErrInvalidCredentials", err)
-		}
-	})
+	unknown := Identity{Provider: "test", Subject: "subject-2"}
+	if _, err := FindUserByIdentity(ctx, unknown); !errors.Is(err, ErrNoSuchUser) {
+		t.Errorf("an unknown identity returned %v, want ErrNoSuchUser", err)
+	}
+}
 
-	t.Run("unknown username", func(t *testing.T) {
-		if _, err := AuthenticateUser(ctx, "no_such_person", "correct-horse-battery"); !errors.Is(err, ErrInvalidCredentials) {
-			t.Errorf("got %v, want ErrInvalidCredentials", err)
-		}
-	})
+// The subject identifies the account, not the address. Someone whose email
+// changes at the provider must land on the same account, and the address on file
+// should follow rather than go stale.
+func TestIdentityIsKeyedOnSubjectNotEmail(t *testing.T) {
+	requireMongo(t)
+	requireUniqueIdentityIndex(t)
+	ctx := context.Background()
+
+	created, err := CreateUser(ctx,
+		Identity{Provider: "test", Subject: "stable-subject", Email: "before@example.com"},
+		"email_changer")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	found, err := FindUserByIdentity(ctx,
+		Identity{Provider: "test", Subject: "stable-subject", Email: "after@example.com"})
+	if err != nil {
+		t.Fatalf("finding the identity after its email changed: %v", err)
+	}
+	if found.ID != created.ID {
+		t.Error("a changed email reached a different account")
+	}
+	if found.Email != "after@example.com" {
+		t.Errorf("the stored email is %q, want it to follow the provider", found.Email)
+	}
+
+	// The same address under a different subject is a different person.
+	if _, err := FindUserByIdentity(ctx,
+		Identity{Provider: "test", Subject: "other-subject", Email: "after@example.com"},
+	); !errors.Is(err, ErrNoSuchUser) {
+		t.Error("a matching email handed over somebody else's account")
+	}
 }
 
 // A name may only be claimed once however it is capitalised, or "Admin" and
@@ -58,84 +73,56 @@ func TestAuthenticateUser(t *testing.T) {
 func TestUsernamesAreClaimedRegardlessOfCase(t *testing.T) {
 	requireMongo(t)
 	requireUniqueUsernameIndex(t)
+	requireUniqueIdentityIndex(t)
 	ctx := context.Background()
 
-	if _, err := RegisterUser(ctx, "Connoisseur", "correct-horse-battery"); err != nil {
+	if _, err := CreateUser(ctx, Identity{Provider: "test", Subject: "case-1"}, "Connoisseur"); err != nil {
 		t.Fatal(err)
 	}
 
-	for _, attempt := range []string{"connoisseur", "CONNOISSEUR", "ConNoIsSeUr"} {
-		if _, err := RegisterUser(ctx, attempt, "another-good-password"); !errors.Is(err, ErrUsernameTaken) {
-			t.Errorf("registering %q returned %v, want ErrUsernameTaken", attempt, err)
+	for i, attempt := range []string{"connoisseur", "CONNOISSEUR", "ConNoIsSeUr"} {
+		identity := Identity{Provider: "test", Subject: "case-taken-" + string(rune('a'+i))}
+		if _, err := CreateUser(ctx, identity, attempt); !errors.Is(err, ErrUsernameTaken) {
+			t.Errorf("claiming %q returned %v, want ErrUsernameTaken", attempt, err)
 		}
 	}
 }
 
-// Logging in should not depend on remembering the capitalisation, while the
-// display name keeps it.
-func TestLoginIgnoresCaseButDisplayNameKeepsIt(t *testing.T) {
+// Submitting the username form twice, or two callbacks racing, must not leave
+// one identity with two accounts.
+func TestCreateUserIsIdempotentForOneIdentity(t *testing.T) {
 	requireMongo(t)
+	requireUniqueUsernameIndex(t)
+	requireUniqueIdentityIndex(t)
 	ctx := context.Background()
 
-	created, err := RegisterUser(ctx, "MixedCase", "correct-horse-battery")
+	identity := Identity{Provider: "test", Subject: "double-submit"}
+	first, err := CreateUser(ctx, identity, "double_submitter")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if created.Username != "MixedCase" {
-		t.Errorf("stored display name is %q, want %q", created.Username, "MixedCase")
-	}
 
-	for _, attempt := range []string{"MixedCase", "mixedcase", "MIXEDCASE"} {
-		user, err := AuthenticateUser(ctx, attempt, "correct-horse-battery")
-		if err != nil {
-			t.Fatalf("logging in as %q: %v", attempt, err)
-		}
-		if user.ID != created.ID {
-			t.Errorf("logging in as %q reached a different account", attempt)
-		}
-		if user.Username != "MixedCase" {
-			t.Errorf("logging in as %q displays %q, want %q", attempt, user.Username, "MixedCase")
-		}
+	second, err := CreateUser(ctx, identity, "another_name_entirely")
+	if err != nil {
+		t.Fatalf("a repeated sign-up returned %v, want the existing account", err)
+	}
+	if second.ID != first.ID {
+		t.Error("a repeated sign-up created a second account for one identity")
+	}
+	if second.Username != "double_submitter" {
+		t.Errorf("the account was renamed to %q by the repeat", second.Username)
 	}
 }
 
-// Rejecting an unknown username must cost about what rejecting a known one
-// costs. Without the dummy hash the unknown path skips bcrypt entirely and
-// returns in microseconds against tens of milliseconds, which tells an attacker
-// exactly which accounts exist.
-func TestUnknownUsernameCostsAsMuchAsAWrongPassword(t *testing.T) {
+func TestCreateUserRejectsBadUsernames(t *testing.T) {
 	requireMongo(t)
 	ctx := context.Background()
 
-	if _, err := RegisterUser(ctx, "timing_subject", "correct-horse-battery"); err != nil {
-		t.Fatal(err)
-	}
-
-	// The fastest of several runs, because scheduling noise only ever makes a
-	// run slower. That makes this a lower bound on each path's real cost and
-	// keeps the comparison stable on a loaded CI machine.
-	fastest := func(username string) time.Duration {
-		best := time.Duration(1<<63 - 1)
-		for range 3 {
-			start := time.Now()
-			if _, err := AuthenticateUser(ctx, username, "wrong-password-entirely"); !errors.Is(err, ErrInvalidCredentials) {
-				t.Fatalf("authenticating %q: got %v, want ErrInvalidCredentials", username, err)
-			}
-			if elapsed := time.Since(start); elapsed < best {
-				best = elapsed
-			}
+	for _, username := range []string{"", "ab", "bad name!", DeletedUsername} {
+		identity := Identity{Provider: "test", Subject: "bad-" + username}
+		if _, err := CreateUser(ctx, identity, username); err == nil {
+			t.Errorf("username %q was accepted", username)
 		}
-		return best
-	}
-
-	known := fastest("timing_subject")
-	unknown := fastest("no_such_person")
-
-	// Half the known-username cost is a wide margin: the gap this guards
-	// against is three orders of magnitude, not a factor of two.
-	if unknown < known/2 {
-		t.Errorf("an unknown username was rejected in %v against %v for a known one, "+
-			"which is a usable oracle for enumerating accounts", unknown, known)
 	}
 }
 
@@ -145,25 +132,22 @@ func TestDeletedUsernameIsUnregisterable(t *testing.T) {
 	if usernamePattern.MatchString(DeletedUsername) {
 		t.Errorf("%q matches the username pattern, so it can be registered", DeletedUsername)
 	}
-	if err := validateCredentials(DeletedUsername, "correct-horse-battery"); err == nil {
-		t.Errorf("%q passes credential validation", DeletedUsername)
+	if err := validateUsername(DeletedUsername); err == nil {
+		t.Errorf("%q passes username validation", DeletedUsername)
 	}
 }
 
-// A password change has to raise the version, since that is what invalidates
-// sessions issued against the old one.
-func TestChangePasswordRaisesTheCredentialVersion(t *testing.T) {
+// Signing out everywhere has to raise the version, since that is what
+// invalidates the sessions already handed out.
+func TestSignOutEverywhereRaisesTheCredentialVersion(t *testing.T) {
 	requireMongo(t)
 	ctx := context.Background()
 
-	user, err := RegisterUser(ctx, "version_subject", "correct-horse-battery")
-	if err != nil {
-		t.Fatal(err)
-	}
+	user := newUser(t, "version_subject")
 	before := user.CredentialVersion
 
-	if err := ChangePassword(ctx, user.ID, "correct-horse-battery", "a-brand-new-password"); err != nil {
-		t.Fatalf("changing password: %v", err)
+	if err := SignOutEverywhere(ctx, user.ID); err != nil {
+		t.Fatalf("signing out everywhere: %v", err)
 	}
 
 	after, err := FindUserByID(ctx, user.ID)
@@ -173,18 +157,6 @@ func TestChangePasswordRaisesTheCredentialVersion(t *testing.T) {
 	if after.CredentialVersion <= before {
 		t.Errorf("the credential version went from %d to %d, want it to rise", before, after.CredentialVersion)
 	}
-
-	// A wrong current password changes nothing, version included.
-	if err := ChangePassword(ctx, user.ID, "not-the-password", "another-new-password"); !errors.Is(err, ErrInvalidCredentials) {
-		t.Errorf("changing with the wrong current password returned %v, want ErrInvalidCredentials", err)
-	}
-	unchanged, err := FindUserByID(ctx, user.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if unchanged.CredentialVersion != after.CredentialVersion {
-		t.Error("a refused password change still raised the version")
-	}
 }
 
 // The rename runs before the account is removed. The other order would free the
@@ -193,12 +165,10 @@ func TestChangePasswordRaisesTheCredentialVersion(t *testing.T) {
 func TestDeleteUserRenamesContentBeforeFreeingTheName(t *testing.T) {
 	requireMongo(t)
 	requireUniqueUsernameIndex(t)
+	requireUniqueIdentityIndex(t)
 	ctx := context.Background()
 
-	user, err := RegisterUser(ctx, "leaving_author", "correct-horse-battery")
-	if err != nil {
-		t.Fatal(err)
-	}
+	user := newUser(t, "leaving_author")
 
 	restaurant := &Restaurant{
 		Name:        "Left Behind Bistro",
@@ -212,7 +182,7 @@ func TestDeleteUserRenamesContentBeforeFreeingTheName(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := DeleteUser(ctx, user.ID, "correct-horse-battery"); err != nil {
+	if err := DeleteUser(ctx, user.ID); err != nil {
 		t.Fatalf("deleting user: %v", err)
 	}
 
@@ -226,11 +196,8 @@ func TestDeleteUserRenamesContentBeforeFreeingTheName(t *testing.T) {
 		t.Error("the author ID was cleared, so ownership is no longer well defined")
 	}
 
-	// Someone registering the freed name inherits nothing.
-	successor, err := RegisterUser(ctx, "leaving_author", "another-good-password")
-	if err != nil {
-		t.Fatalf("re-registering the freed name: %v", err)
-	}
+	// Someone taking the freed name inherits nothing.
+	successor := newUser(t, "leaving_author")
 	if successor.ID == user.ID {
 		t.Fatal("the new account reused the old ID")
 	}

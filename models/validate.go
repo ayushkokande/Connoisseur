@@ -28,12 +28,8 @@ func IsValidationError(err error) bool {
 }
 
 const (
-	minUsernameLen = 3
-	maxUsernameLen = 30
-	minPasswordLen = 8
-	// bcrypt hashes at most 72 bytes and rejects longer inputs outright.
-	maxPasswordLen = 72
-
+	minUsernameLen    = 3
+	maxUsernameLen    = 30
 	maxNameLen        = 120
 	maxCuisineLen     = 60
 	maxDescriptionLen = 2000
@@ -86,27 +82,15 @@ func isValidPriceRange(value string) bool {
 	return slices.Contains(priceRanges, value)
 }
 
-func validateCredentials(username, password string) error {
+// validateUsername checks a name someone has chosen for themselves. Sign-in
+// itself no longer involves a password, so this is the whole of what a person
+// supplies about their account.
+func validateUsername(username string) error {
 	if n := utf8.RuneCountInString(username); n < minUsernameLen || n > maxUsernameLen {
 		return invalid("Username must be between %d and %d characters.", minUsernameLen, maxUsernameLen)
 	}
 	if !usernamePattern.MatchString(username) {
 		return invalid("Username may only contain letters, numbers and underscores.")
-	}
-	return validatePassword(password)
-}
-
-// validatePassword is separate from validateCredentials because changing a
-// password does not involve the username, and the rules must not drift apart
-// between the two paths.
-func validatePassword(password string) error {
-	// Length is counted in bytes: bcrypt's 72-byte cap is a byte limit, and a
-	// password of 72 multi-byte runes would be silently truncated otherwise.
-	if len(password) < minPasswordLen {
-		return invalid("Password must be at least %d characters.", minPasswordLen)
-	}
-	if len(password) > maxPasswordLen {
-		return invalid("Password must be at most %d bytes.", maxPasswordLen)
 	}
 	return nil
 }

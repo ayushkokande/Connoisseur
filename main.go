@@ -94,6 +94,19 @@ func main() {
 		fatal("migrating data", "error", err)
 	}
 
+	// Signing in goes through Google, so the app needs credentials from a client
+	// registered there. Without them it starts and serves the site read-only,
+	// rather than refusing to boot: nothing else depends on them.
+	oauth := web.GoogleOAuth(
+		os.Getenv("GOOGLE_CLIENT_ID"),
+		os.Getenv("GOOGLE_CLIENT_SECRET"),
+		env("OAUTH_REDIRECT_URL", "http://localhost:"+env("PORT", "3000")+"/auth/callback"),
+	)
+	if !oauth.Configured() {
+		slog.Warn("no OAuth credentials, so nobody can sign in",
+			"set", "GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET")
+	}
+
 	// Requests arriving through a proxy carry the proxy's address, so without
 	// this every visitor would count against one shared rate limit. Left unset
 	// for a server reached directly, where X-Forwarded-For must not be believed.
@@ -123,6 +136,7 @@ func main() {
 			PublicDir:      "public",
 			CSRFSecret:     csrfSecret,
 			SecureCookies:  production,
+			OAuth:          oauth,
 			TrustedProxies: trustedProxies,
 		}),
 		ReadTimeout:  10 * time.Second,

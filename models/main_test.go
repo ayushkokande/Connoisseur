@@ -83,12 +83,25 @@ func requireMongo(t *testing.T) {
 			t.Fatalf("dropping %s: %v", index, err)
 		}
 	}
+	if err := dropIndex(ctx, users, uniqueIdentityIndexName); err != nil {
+		t.Fatalf("dropping %s: %v", uniqueIdentityIndexName, err)
+	}
 }
 
 const (
 	uniqueReviewIndexName   = "restaurantId_1_author.id_1"
 	uniqueUsernameIndexName = "usernameLower_1"
+	uniqueIdentityIndexName = "provider_1_subject_1"
 )
+
+// requireUniqueIdentityIndex installs the index that keeps one identity to one
+// account. Tests of that rule need it, because the rule is the index.
+func requireUniqueIdentityIndex(t *testing.T) {
+	t.Helper()
+	if err := createUniqueIdentityIndex(context.Background()); err != nil {
+		t.Fatalf("creating the unique identity index: %v", err)
+	}
+}
 
 // requireUniqueReviewIndex installs the index that enforces one review per
 // author. Tests of that rule need it, because the rule is the index.
@@ -106,6 +119,21 @@ func requireUniqueUsernameIndex(t *testing.T) {
 	if err := createUniqueUsernameIndex(context.Background()); err != nil {
 		t.Fatalf("creating the unique username index: %v", err)
 	}
+}
+
+// newUser creates an account the way a first sign-in does, under a fresh
+// identity so that each one is distinct.
+func newUser(t *testing.T, username string) *User {
+	t.Helper()
+	user, err := CreateUser(context.Background(), Identity{
+		Provider: "test",
+		Subject:  bson.NewObjectID().Hex(),
+		Email:    username + "@example.com",
+	}, username)
+	if err != nil {
+		t.Fatalf("creating user %q: %v", username, err)
+	}
+	return user
 }
 
 // newAuthor returns a distinct review author.

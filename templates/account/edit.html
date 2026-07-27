@@ -10,35 +10,22 @@
 					<h5 class="card-title">Signed in as {{$currentUser.Username}}</h5>
 					<p class="card-text text-muted mb-0">
 						Your reviews and restaurants are shown under this name.
+						{{with $currentUser.Email}}<br>Signed in through your account at {{.}}.{{end}}
 					</p>
 				</div>
 			</div>
 
 			<div class="card mb-4">
 				<div class="card-body">
-					<h5 class="card-title">Change password</h5>
+					<h5 class="card-title">Sign out everywhere</h5>
 					<p class="card-text text-muted">
-						Changing your password signs out anywhere else you are logged in.
+						Ends every session for this account, including this one, and signs
+						you straight back in here. Use it if you think someone else is
+						signed in as you.
 					</p>
-					<form action="/account/password?_method=PUT" method="POST">
+					<form action="/account/sessions" method="POST">
 						{{.CSRFField}}
-						<div class="form-group">
-							<label for="current_password">Current password</label>
-							<input class="form-control" type="password" id="current_password"
-								name="current_password" autocomplete="current-password" required>
-						</div>
-						<div class="form-group">
-							<label for="new_password">New password</label>
-							<input class="form-control" type="password" id="new_password"
-								name="new_password" autocomplete="new-password" minlength="8" required>
-							<small class="form-text text-muted">At least 8 characters.</small>
-						</div>
-						<div class="form-group">
-							<label for="confirm_password">Confirm new password</label>
-							<input class="form-control" type="password" id="confirm_password"
-								name="confirm_password" autocomplete="new-password" minlength="8" required>
-						</div>
-						<button class="btn btn-primary" type="submit">Change password</button>
+						<button class="btn btn-primary" type="submit">Sign out everywhere</button>
 					</form>
 				</div>
 			</div>
@@ -55,13 +42,13 @@
 					</p>
 					{{/* No inline onsubmit confirmation: the content security policy
 					     blocks inline handlers, so it would silently never run.
-					     Typing the password is the deliberate step instead. */}}
+					     Typing the username is the deliberate step instead. */}}
 					<form action="/account?_method=DELETE" method="POST">
 						{{.CSRFField}}
 						<div class="form-group">
-							<label for="password">Confirm your password</label>
-							<input class="form-control" type="password" id="password"
-								name="password" autocomplete="current-password" required>
+							<label for="username">Type <strong>{{$currentUser.Username}}</strong> to confirm</label>
+							<input class="form-control" type="text" id="username" name="username"
+								autocomplete="off" required>
 						</div>
 						<button class="btn btn-danger" type="submit">Delete my account</button>
 					</form>

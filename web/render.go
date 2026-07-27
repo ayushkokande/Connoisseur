@@ -29,7 +29,7 @@ func InitTemplates(dir string) error {
 	pages := []string{
 		"landing",
 		"auth/login",
-		"auth/register",
+		"auth/signup",
 		"account/edit",
 		"error",
 		"restaurants/index",

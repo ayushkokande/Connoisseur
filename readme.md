@@ -6,7 +6,10 @@
 
 * Authentication:
 
-  * User sign-up and login with username and password (bcrypt-hashed)
+  * Sign in with a Google account; there is no password to store or lose
+
+  * A username is chosen once, on first sign-in, and is what appears against
+    your restaurants and reviews
 
 * Authorization:
 
@@ -36,8 +39,8 @@
   * Paginated results with shareable, filter-preserving URLs, and paginated
     reviews on each restaurant
 
-* Account management: change your password, or delete your account and leave
-  what you wrote credited to `[deleted_user]`
+* Account management: sign out of every session at once, or delete your account
+  and leave what you wrote credited to `[deleted_user]`
 
 * Flash messages responding to user interactions
 
@@ -99,6 +102,9 @@ a MongoDB already running on the host. Data persists in the `mongo-data` volume;
 | `LOG_LEVEL` | `debug`, `info`, `warn` or `error` | `info` |
 | `PORT` | Port the server listens on | `3000` |
 | `SEED_DB` | Set to `true` to reset and seed the database on startup | unset |
+| `GOOGLE_CLIENT_ID` | OAuth client ID; without it nobody can sign in | unset |
+| `GOOGLE_CLIENT_SECRET` | OAuth client secret | unset |
+| `OAUTH_REDIRECT_URL` | Where Google sends the browser back | `http://localhost:$PORT/auth/callback` |
 | `TRUSTED_PROXIES` | Comma-separated CIDR blocks or addresses whose `X-Forwarded-For` is believed | unset |
 
 In development the two secrets are generated randomly at startup, which logs
@@ -108,6 +114,29 @@ production the server refuses to start without them.
 `APP_ENV=production` also marks the session and CSRF cookies `Secure`, so they
 are only sent over HTTPS — do not set it when serving plain HTTP or logging in
 will silently fail.
+
+#### Setting up sign-in
+
+Sign-in needs a Google OAuth client. In the
+[Google Cloud console](https://console.cloud.google.com/apis/credentials),
+create an **OAuth client ID** of type *Web application* and add the callback as
+an authorised redirect URI — exactly, including the scheme and port:
+
+```
+http://localhost:3000/auth/callback
+```
+
+Then:
+
+```sh
+export GOOGLE_CLIENT_ID=...
+export GOOGLE_CLIENT_SECRET=...
+go run .
+```
+
+Without them the site runs and can be browsed, but signing in reports itself
+unavailable rather than half-working. Only `openid` and `email` are requested,
+which is the least that distinguishes one person from another.
 
 #### Running behind a reverse proxy
 
@@ -175,7 +204,7 @@ Logs are structured via `log/slog` — human-readable text in development, JSON
 when `APP_ENV=production`:
 
 ```
-time=2026-07-26T20:32:23.671Z level=INFO msg=request request_id=6263cf74 method=GET path=/restaurants status=200 bytes=4085 duration_ms=1
+time=2026-07-27T09:32:23.671Z level=INFO msg=request request_id=6263cf74 method=GET path=/restaurants status=200 bytes=4085 duration_ms=1 client_ip=203.0.113.7
 ```
 
 Every request is assigned an ID that is returned in the `X-Request-Id` response
@@ -183,10 +212,23 @@ header and attached to each log line emitted while handling it, so a
 user-reported failure can be traced back to its logs. Successful health checks
 are not logged, to keep frequent probes from burying everything else.
 
+`client_ip` is the visitor rather than the connection, so behind a proxy it means
+something. It is resolved from the same `TRUSTED_PROXIES` setting the rate limits
+use, so a throttling warning can be matched against the requests around it.
+
 ## Security
 
-* Passwords are hashed with bcrypt; the 72-byte bcrypt input limit is enforced
-  at registration rather than silently truncating.
+* Sign-in is delegated to Google, so this application never sees, stores or can
+  leak a password.
+* The OAuth flow carries a `state` parameter tied to the browser's session and a
+  PKCE challenge. The first stops someone completing a sign-in of their own and
+  handing the callback URL to a victim, who would otherwise end up signed in as
+  them; the second stops an intercepted authorisation code being redeemed by
+  anyone but whoever asked for it. Both are checked, and each is tested with the
+  other stood down so neither hides a gap in the other.
+* An account is identified by the provider's own subject, never by email
+  address. A provider that let an address be reassigned would otherwise hand
+  over somebody else's account.
 * All state-changing requests require a CSRF token, submitted as a hidden field
   in every form.
 * Session cookies are encrypted as well as signed, so their contents are not
@@ -198,7 +240,7 @@ are not logged, to keep frequent probes from burying everything else.
   expires the cookie.
 * Logout is a POST, so it cannot be triggered by a cross-site link.
 * User input is validated in the model layer: username shape and length,
-  password length, field lengths, an allowlisted price range, and image URLs
+  field lengths, an allowlisted price range, and image URLs
   restricted to absolute `http`/`https` (which rejects `javascript:` and
   `data:` URLs).
 * Usernames are unique regardless of case, so `Admin` and `admin` cannot be two
@@ -213,19 +255,15 @@ are not logged, to keep frequent probes from burying everything else.
   loosely — twenty back to back, then one every three seconds. Nothing is being
   guessed there, so it only has to stop a script filling the listing. Reading is
   never throttled.
-* Changing a password requires the current one, so a stolen session cannot be
-  used to take an account over. It also raises a credential version stored in
-  the session, which signs out every session issued against the old password —
-  the reason for changing it after a compromise.
-* Deleting an account requires the password too. The restaurants and reviews it
+* Signing out everywhere raises a credential version recorded in each session,
+  which invalidates every session already handed out — what someone reaches for
+  when they think one has been taken.
+* Deleting an account asks for the username to be typed back, so something
+  irreversible takes more than one button press. The restaurants and reviews it
   wrote stay on the site, credited to `[deleted_user]`, so other people's reviews
   of a restaurant do not disappear with whoever added it. That placeholder
   contains brackets, which usernames may not, so no real account can be
   registered under it.
-* Authentication takes the same time whether or not the username exists. The
-  unknown-username path performs a bcrypt comparison against a fixed dummy hash
-  and discards the result, so response timing cannot be used to enumerate
-  registered accounts.
 * Every response carries a content security policy naming exactly the sources
   the templates use, with a per-response nonce for the one inline script.
   Framing, plugins, outbound connections and rewriting the form target are all
@@ -235,6 +273,17 @@ are not logged, to keep frequent probes from burying everything else.
   belongs to, not merely by its author.
 * Pages are rendered into a buffer before anything is written, so a template
   failure becomes a `500` rather than a half-written page under a `200`.
+
+### Error pages
+
+404, 429 and the 500 from a failed render are served as ordinary pages inside the
+site layout, carrying the status they mean. The error page falls back to plain
+text if it cannot itself be rendered — the commonest caller is a handler whose
+own template just failed, so answering one render failure with another would
+loop.
+
+The static file handler still writes its own plain-text 404 for a missing
+stylesheet, which is not a page anyone browses to.
 
 ## Project Structure
 
@@ -250,14 +299,16 @@ Connoisseur/
 │   ├── restaurant.go   # Restaurant model (name, image, cuisine, price range, ...)
 │   ├── comment.go      # Review model (text plus a 1-5 star rating)
 │   ├── migrate.go      # Idempotent startup migration of pre-existing data
-│   ├── user.go         # User model (bcrypt registration/authentication)
+│   ├── user.go         # Accounts, keyed on the provider identity signed in with
 │   └── validate.go     # Input validation rules
 ├── web/
 │   ├── routes.go       # Route table, handler config, CSRF protection
 │   ├── restaurants.go  # RESTful restaurant handlers
 │   ├── comments.go     # Nested review handlers
-│   ├── auth.go         # Landing, register, login, logout
-│   ├── account.go      # Password change and account deletion
+│   ├── auth.go         # Landing, sign-in page, logout
+│   ├── oauth.go        # The provider flow: state, PKCE, callback, identity
+│   ├── signup.go       # Choosing a username on a first sign-in
+│   ├── account.go      # Signing out everywhere, and account deletion
 │   ├── middleware.go   # Auth & ownership middleware, method override
 │   ├── ratelimit.go    # Per-client token buckets for login and registration
 │   ├── clientip.go     # Client address resolution, trusted-proxy handling
@@ -302,11 +353,13 @@ Connoisseur/
 | Path | Verb | Description |
 | --- | --- | --- |
 | `/` | GET | Landing page |
-| `/register` | GET / POST | Sign-up form and handler |
-| `/login` | GET / POST | Login form and handler |
+| `/login` | GET | Sign-in page |
 | `/logout` | POST | Log out |
+| `/auth/start` | GET | Begin sign-in at the provider |
+| `/auth/callback` | GET | Where the provider sends the browser back |
+| `/signup` | GET / POST | Choose a username, on a first sign-in only |
 | `/account` | GET | Account settings * |
-| `/account/password` | PUT | Change password * |
+| `/account/sessions` | POST | Sign out everywhere * |
 | `/account` | DELETE | Delete account * |
 
 ### Operations
@@ -394,7 +447,8 @@ restaurant with nothing but those reads as "Not yet rated".
 * [mongo-go-driver](https://github.com/mongodb/mongo-go-driver)
 * [gorilla/sessions](https://github.com/gorilla/sessions)
 * [gorilla/csrf](https://github.com/gorilla/csrf)
-* [x/crypto/bcrypt](https://pkg.go.dev/golang.org/x/crypto/bcrypt)
+* [x/oauth2](https://pkg.go.dev/golang.org/x/oauth2)
+* [x/time/rate](https://pkg.go.dev/golang.org/x/time/rate)
 
 ## License
 

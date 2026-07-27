@@ -36,6 +36,13 @@ func Migrate(ctx context.Context) error {
 		return fmt.Errorf("removing duplicate reviews: %w", err)
 	}
 
+	// Before the rename pass, so it does not spend work on accounts that are
+	// about to go.
+	retired, err := removePasswordAccounts(ctx)
+	if err != nil {
+		return fmt.Errorf("removing password accounts: %w", err)
+	}
+
 	renamed, err := normalizeUsernames(ctx)
 	if err != nil {
 		return fmt.Errorf("normalizing usernames: %w", err)
@@ -54,11 +61,16 @@ func Migrate(ctx context.Context) error {
 		return fmt.Errorf("enforcing unique usernames: %w", err)
 	}
 
-	if linked > 0 || deduped > 0 || renamed > 0 || refreshed > 0 {
+	if err := createUniqueIdentityIndex(ctx); err != nil {
+		return fmt.Errorf("enforcing one account per identity: %w", err)
+	}
+
+	if linked > 0 || deduped > 0 || renamed > 0 || retired > 0 || refreshed > 0 {
 		slog.Info("migrated legacy data",
 			"comments_linked", linked,
 			"duplicate_reviews_removed", deduped,
 			"users_renamed", renamed,
+			"password_accounts_removed", retired,
 			"restaurants_refreshed", refreshed,
 		)
 	}
@@ -248,6 +260,55 @@ func renameUser(ctx context.Context, id bson.ObjectID, name string) error {
 		}
 	}
 	return nil
+}
+
+// removePasswordAccounts deletes the accounts left over from username and
+// password sign-in, which no longer exists.
+//
+// Nothing links such an account to an identity at a provider: no email address
+// was ever stored, so there is no key the two could be matched on. The choice is
+// therefore between deleting them and leaving accounts nobody can ever sign in
+// to, and an account that cannot be reached is not worth the confusion of
+// keeping. What they wrote stays, credited to DeletedUsername, by the same path
+// a person deleting their own account takes.
+//
+// An account is identified as one of these by having no provider, which the
+// accounts created since always do.
+func removePasswordAccounts(ctx context.Context) (int, error) {
+	cursor, err := users.Find(ctx,
+		bson.M{"provider": bson.M{"$in": bson.A{nil, ""}}},
+		options.Find().SetProjection(bson.M{"_id": 1, "username": 1}))
+	if err != nil {
+		return 0, err
+	}
+	var stale []struct {
+		ID       bson.ObjectID `bson:"_id"`
+		Username string        `bson:"username"`
+	}
+	if err := cursor.All(ctx, &stale); err != nil {
+		return 0, err
+	}
+
+	for _, user := range stale {
+		if err := DeleteUser(ctx, user.ID); err != nil {
+			return 0, err
+		}
+		slog.Warn("removed a password account, since sign-in now goes through a provider",
+			"user_id", user.ID.Hex(),
+			"username", user.Username,
+		)
+	}
+	return len(stale), nil
+}
+
+// createUniqueIdentityIndex enforces one account per provider identity, so a
+// sign-in cannot end up with two accounts to choose between.
+func createUniqueIdentityIndex(ctx context.Context) error {
+	_, err := users.Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys:    bson.D{{Key: "provider", Value: 1}, {Key: "subject", Value: 1}},
+		Options: options.Index().SetUnique(true),
+	})
+	return err
 }
 
 // createUniqueUsernameIndex enforces one account per name, ignoring case. The
