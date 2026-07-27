@@ -92,6 +92,12 @@ func lookupUser(r *http.Request) *models.User {
 	if err != nil {
 		return nil
 	}
+	// A session issued before the password changed is no longer valid, which is
+	// what makes changing a password remove whoever else was holding one. The
+	// comparison is free: the user has already been loaded.
+	if version, _ := session.Values["credentialVersion"].(int); version != user.CredentialVersion {
+		return nil
+	}
 	return user
 }
 
@@ -102,6 +108,7 @@ func logIn(w http.ResponseWriter, r *http.Request, user *models.User) {
 	session := getSession(r)
 	clear(session.Values)
 	session.Values["userID"] = user.ID.Hex()
+	session.Values["credentialVersion"] = user.CredentialVersion
 	saveSession(w, r, session)
 }
 

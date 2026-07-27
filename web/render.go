@@ -19,6 +19,9 @@ var funcMap = template.FuncMap{
 	"fromNow": fromNow,
 	"stars":   models.Stars,
 	"year":    func() int { return time.Now().Year() },
+	// So the account page names the placeholder it will actually use, rather
+	// than a copy of it that can drift.
+	"deletedUsername": func() string { return models.DeletedUsername },
 }
 
 // InitTemplates parses every page template against the shared layout.
@@ -27,6 +30,7 @@ func InitTemplates(dir string) error {
 		"landing",
 		"auth/login",
 		"auth/register",
+		"account/edit",
 		"restaurants/index",
 		"restaurants/show",
 		"restaurants/new",

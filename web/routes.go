@@ -54,6 +54,12 @@ func Routes(cfg Config) http.Handler {
 	mux.HandleFunc("POST /login", auth.protect(login))
 	mux.HandleFunc("POST /logout", logout)
 
+	// Account management. Both submissions check the account's password, so they
+	// draw on the auth limit rather than the write one.
+	mux.HandleFunc("GET /account", isLoggedIn(accountForm))
+	mux.HandleFunc("PUT /account/password", auth.protect(isLoggedIn(accountUpdatePassword)))
+	mux.HandleFunc("DELETE /account", auth.protect(isLoggedIn(accountDelete)))
+
 	// Restaurants
 	mux.HandleFunc("GET /restaurants", restaurantsIndex)
 	mux.HandleFunc("POST /restaurants", write.protect(isLoggedIn(restaurantsCreate)))
@@ -102,7 +108,7 @@ func Routes(cfg Config) http.Handler {
 
 	// SecurityHeaders wraps everything, so the static files and the responses
 	// produced by CSRF rejections and 404s are covered too.
-	return RequestLogger(SecurityHeaders(cfg.SecureCookies, root))
+	return RequestLogger(cfg.TrustedProxies, SecurityHeaders(cfg.SecureCookies, root))
 }
 
 // markPlaintext tells gorilla/csrf that requests arrive over plain HTTP. Without

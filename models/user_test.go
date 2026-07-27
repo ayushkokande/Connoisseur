@@ -138,3 +138,103 @@ func TestUnknownUsernameCostsAsMuchAsAWrongPassword(t *testing.T) {
 			"which is a usable oracle for enumerating accounts", unknown, known)
 	}
 }
+
+// The placeholder must be a name the validation rules reject, or someone could
+// register it and appear to have written every deleted account's content.
+func TestDeletedUsernameIsUnregisterable(t *testing.T) {
+	if usernamePattern.MatchString(DeletedUsername) {
+		t.Errorf("%q matches the username pattern, so it can be registered", DeletedUsername)
+	}
+	if err := validateCredentials(DeletedUsername, "correct-horse-battery"); err == nil {
+		t.Errorf("%q passes credential validation", DeletedUsername)
+	}
+}
+
+// A password change has to raise the version, since that is what invalidates
+// sessions issued against the old one.
+func TestChangePasswordRaisesTheCredentialVersion(t *testing.T) {
+	requireMongo(t)
+	ctx := context.Background()
+
+	user, err := RegisterUser(ctx, "version_subject", "correct-horse-battery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := user.CredentialVersion
+
+	if err := ChangePassword(ctx, user.ID, "correct-horse-battery", "a-brand-new-password"); err != nil {
+		t.Fatalf("changing password: %v", err)
+	}
+
+	after, err := FindUserByID(ctx, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.CredentialVersion <= before {
+		t.Errorf("the credential version went from %d to %d, want it to rise", before, after.CredentialVersion)
+	}
+
+	// A wrong current password changes nothing, version included.
+	if err := ChangePassword(ctx, user.ID, "not-the-password", "another-new-password"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Errorf("changing with the wrong current password returned %v, want ErrInvalidCredentials", err)
+	}
+	unchanged, err := FindUserByID(ctx, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unchanged.CredentialVersion != after.CredentialVersion {
+		t.Error("a refused password change still raised the version")
+	}
+}
+
+// The rename runs before the account is removed. The other order would free the
+// username while it still sat on the old content, so whoever registered it next
+// would appear to have written it.
+func TestDeleteUserRenamesContentBeforeFreeingTheName(t *testing.T) {
+	requireMongo(t)
+	requireUniqueUsernameIndex(t)
+	ctx := context.Background()
+
+	user, err := RegisterUser(ctx, "leaving_author", "correct-horse-battery")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	restaurant := &Restaurant{
+		Name:        "Left Behind Bistro",
+		Image:       "https://example.com/photo.jpg",
+		Cuisine:     "Italian",
+		PriceRange:  "$$",
+		Description: "Written before the account went.",
+		Author:      Author{ID: user.ID, Username: user.Username},
+	}
+	if err := CreateRestaurant(ctx, restaurant); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := DeleteUser(ctx, user.ID, "correct-horse-battery"); err != nil {
+		t.Fatalf("deleting user: %v", err)
+	}
+
+	reloaded := reload(t, restaurant.ID)
+	if reloaded.Author.Username != DeletedUsername {
+		t.Errorf("the restaurant credits %q, want %q", reloaded.Author.Username, DeletedUsername)
+	}
+	// The ID is kept, so the content stays uneditable rather than falling to
+	// whoever happens to match a zeroed one.
+	if reloaded.Author.ID != user.ID {
+		t.Error("the author ID was cleared, so ownership is no longer well defined")
+	}
+
+	// Someone registering the freed name inherits nothing.
+	successor, err := RegisterUser(ctx, "leaving_author", "another-good-password")
+	if err != nil {
+		t.Fatalf("re-registering the freed name: %v", err)
+	}
+	if successor.ID == user.ID {
+		t.Fatal("the new account reused the old ID")
+	}
+	if again := reload(t, restaurant.ID); again.Author.Username == successor.Username {
+		t.Error("the old content is credited to whoever took the name next")
+	}
+}

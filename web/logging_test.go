@@ -3,6 +3,8 @@ package web
 import (
 	"bytes"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"sync"
@@ -70,5 +72,31 @@ func TestHealthChecksAreNotLogged(t *testing.T) {
 
 	if strings.Contains(logs.String(), healthPath) {
 		t.Errorf("successful health check was logged:\n%s", logs.String())
+	}
+}
+
+// Behind a proxy every request carries the proxy's address, so a log keyed on it
+// reports one address for the whole site and cannot be matched against the
+// throttling warnings, which do record the resolved client.
+func TestRequestLogReportsTheForwardedClient(t *testing.T) {
+	trusted, err := ParseTrustedProxies("192.0.2.0/24")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	logs := captureLogs(t)
+
+	handler := RequestLogger(trusted, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	req := httptest.NewRequest(http.MethodGet, "/restaurants", nil)
+	req.RemoteAddr = "192.0.2.10:44321"
+	req.Header.Set("X-Forwarded-For", "203.0.113.7")
+	handler.ServeHTTP(httptest.NewRecorder(), req)
+
+	output := logs.String()
+	if !strings.Contains(output, "client_ip=203.0.113.7") {
+		t.Errorf("the log does not report the forwarded client:\n%s", output)
+	}
+	if strings.Contains(output, "192.0.2.10") {
+		t.Errorf("the log reports the proxy rather than the client:\n%s", output)
 	}
 }
