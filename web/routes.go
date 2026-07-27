@@ -19,6 +19,9 @@ type Config struct {
 	// AuthRateLimit throttles login and registration per client address. The
 	// zero value applies DefaultAuthRateLimit.
 	AuthRateLimit RateLimit
+	// WriteRateLimit throttles creating restaurants and reviews per client
+	// address. The zero value applies DefaultWriteRateLimit.
+	WriteRateLimit RateLimit
 	// TrustedProxies are the networks whose X-Forwarded-For header is believed
 	// when working out which client a request came from. Leave it empty when
 	// this server is reached directly. Setting it wrongly is not cosmetic:
@@ -35,7 +38,13 @@ func Routes(cfg Config) http.Handler {
 
 	// Only the submissions are throttled, not the forms: fetching a login page
 	// costs nothing to serve and is not how a password is guessed.
-	auth := newRateLimiter(cfg.AuthRateLimit, cfg.TrustedProxies)
+	auth := newRateLimiter(cfg.AuthRateLimit.orDefault(DefaultAuthRateLimit), cfg.TrustedProxies)
+
+	// Creating content is throttled separately and far more loosely. Nothing is
+	// being guessed here, so the limit only has to be tight enough to stop a
+	// script filling the listing while leaving a person adding a few
+	// restaurants in a sitting unaffected.
+	write := newRateLimiter(cfg.WriteRateLimit.orDefault(DefaultWriteRateLimit), cfg.TrustedProxies)
 
 	// Auth
 	mux.HandleFunc("GET /{$}", landing)
@@ -47,7 +56,7 @@ func Routes(cfg Config) http.Handler {
 
 	// Restaurants
 	mux.HandleFunc("GET /restaurants", restaurantsIndex)
-	mux.HandleFunc("POST /restaurants", isLoggedIn(restaurantsCreate))
+	mux.HandleFunc("POST /restaurants", write.protect(isLoggedIn(restaurantsCreate)))
 	mux.HandleFunc("GET /restaurants/new", isLoggedIn(restaurantsNewForm))
 	mux.HandleFunc("GET /restaurants/{id}", restaurantsShow)
 	mux.HandleFunc("GET /restaurants/{id}/edit", checkRestaurantOwnership(restaurantsEditForm))
@@ -56,7 +65,7 @@ func Routes(cfg Config) http.Handler {
 
 	// Comments (nested under a restaurant)
 	mux.HandleFunc("GET /restaurants/{id}/comments/new", isLoggedIn(commentsNewForm))
-	mux.HandleFunc("POST /restaurants/{id}/comments", isLoggedIn(commentsCreate))
+	mux.HandleFunc("POST /restaurants/{id}/comments", write.protect(isLoggedIn(commentsCreate)))
 	mux.HandleFunc("GET /restaurants/{id}/comments/{comment_id}/edit", checkCommentOwnership(commentsEditForm))
 	mux.HandleFunc("PUT /restaurants/{id}/comments/{comment_id}", checkCommentOwnership(commentsUpdate))
 	mux.HandleFunc("DELETE /restaurants/{id}/comments/{comment_id}", checkCommentOwnership(commentsDelete))

@@ -70,7 +70,8 @@ func TestMain(m *testing.M) {
 			// so the shared server gets a limit far looser than production's.
 			// The real limit is exercised by TestAuthRateLimitBlocksGuessing,
 			// which builds a server of its own.
-			AuthRateLimit: RateLimit{Every: time.Millisecond, Burst: 100000},
+			AuthRateLimit:  RateLimit{Every: time.Millisecond, Burst: 100000},
+			WriteRateLimit: RateLimit{Every: time.Millisecond, Burst: 100000},
 		}))
 	}
 

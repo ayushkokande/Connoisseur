@@ -24,11 +24,17 @@ type RateLimit struct {
 // guessing even a weak password is impractical.
 var DefaultAuthRateLimit = RateLimit{Every: 15 * time.Second, Burst: 8}
 
-// orDefault fills in the production limit for a zero RateLimit, so a caller
-// that does not configure throttling still gets it.
-func (l RateLimit) orDefault() RateLimit {
+// DefaultWriteRateLimit throttles creating restaurants and reviews. It is far
+// looser than the auth limit because there is nothing to guess here: it exists
+// to stop a script filling the listing, not to slow down a person, and someone
+// adding a handful of restaurants in a sitting stays well inside it.
+var DefaultWriteRateLimit = RateLimit{Every: 3 * time.Second, Burst: 20}
+
+// orDefault fills in fallback for a zero RateLimit, so a caller that does not
+// configure throttling still gets it rather than getting none.
+func (l RateLimit) orDefault(fallback RateLimit) RateLimit {
 	if l.Every <= 0 || l.Burst <= 0 {
-		return DefaultAuthRateLimit
+		return fallback
 	}
 	return l
 }
@@ -53,9 +59,11 @@ type bucket struct {
 	lastSeen time.Time
 }
 
+// newRateLimiter builds a limiter for an already-resolved limit; callers apply
+// orDefault themselves, so a zero limit here is a mistake rather than a default.
 func newRateLimiter(limit RateLimit, trusted []netip.Prefix) *rateLimiter {
 	return &rateLimiter{
-		limit:   limit.orDefault(),
+		limit:   limit,
 		trusted: trusted,
 		buckets: map[string]*bucket{},
 	}

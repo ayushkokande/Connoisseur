@@ -186,6 +186,10 @@ are not logged, to keep frequent probes from burying everything else.
   at registration rather than silently truncating.
 * All state-changing requests require a CSRF token, submitted as a hidden field
   in every form.
+* Session cookies are encrypted as well as signed, so their contents are not
+  readable by anything holding the cookie. The signing and encryption keys are
+  derived from `SESSION_SECRET` with HKDF, which keeps them independent and
+  accepts a secret of any length.
 * Session cookies are `HttpOnly`, `SameSite=Lax`, `Secure` in production, and
   expire after a week. Logging in clears any prior session state; logging out
   expires the cookie.
@@ -202,6 +206,10 @@ are not logged, to keep frequent probes from burying everything else.
   `Retry-After`. The login form itself is not throttled, so a throttled visitor
   can still come back. See [running behind a reverse proxy](#running-behind-a-reverse-proxy)
   for the configuration this needs when the app is not reached directly.
+* Creating restaurants and reviews is rate limited separately and far more
+  loosely — twenty back to back, then one every three seconds. Nothing is being
+  guessed there, so it only has to stop a script filling the listing. Reading is
+  never throttled.
 * Authentication takes the same time whether or not the username exists. The
   unknown-username path performs a bcrypt comparison against a fixed dummy hash
   and discards the result, so response timing cannot be used to enumerate

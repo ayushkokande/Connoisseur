@@ -86,16 +86,23 @@ func TestRateLimiterForgetsIdleClients(t *testing.T) {
 // A zero RateLimit means the caller did not configure one, which must fall back
 // to throttling rather than to no limit at all.
 func TestZeroRateLimitFallsBackToTheDefault(t *testing.T) {
-	if got := (RateLimit{}).orDefault(); got != DefaultAuthRateLimit {
-		t.Errorf("zero RateLimit resolved to %+v, want %+v", got, DefaultAuthRateLimit)
-	}
-	if got := (RateLimit{Every: time.Second, Burst: 0}).orDefault(); got != DefaultAuthRateLimit {
-		t.Errorf("a zero burst resolved to %+v, want %+v", got, DefaultAuthRateLimit)
+	for _, fallback := range []RateLimit{DefaultAuthRateLimit, DefaultWriteRateLimit} {
+		if got := (RateLimit{}).orDefault(fallback); got != fallback {
+			t.Errorf("zero RateLimit resolved to %+v, want %+v", got, fallback)
+		}
+		if got := (RateLimit{Every: time.Second, Burst: 0}).orDefault(fallback); got != fallback {
+			t.Errorf("a zero burst resolved to %+v, want %+v", got, fallback)
+		}
 	}
 
 	limit := RateLimit{Every: time.Hour, Burst: 1}
-	if got := limit.orDefault(); got != limit {
+	if got := limit.orDefault(DefaultAuthRateLimit); got != limit {
 		t.Errorf("a configured limit was replaced with %+v", got)
+	}
+
+	// Writing is not guessing, so the two limits must not be the same figure.
+	if DefaultWriteRateLimit == DefaultAuthRateLimit {
+		t.Error("the write limit is the auth limit; content creation is being throttled as if it were a password guess")
 	}
 }
 
@@ -217,6 +224,94 @@ func TestAuthRateLimitBlocksGuessing(t *testing.T) {
 	if resp.StatusCode != http.StatusTooManyRequests {
 		t.Errorf("the correct password returned %d while throttled, want %d",
 			resp.StatusCode, http.StatusTooManyRequests)
+	}
+}
+
+// Nothing capped how fast content could be created. One review per restaurant
+// bounds review spam, but nothing stopped a script filling the listing with
+// restaurants.
+func TestWriteRateLimitBoundsContentCreation(t *testing.T) {
+	requireMongo(t)
+
+	const burst = 3
+	strict := httptest.NewServer(Routes(Config{
+		PublicDir:      "../public",
+		CSRFSecret:     "test-csrf-secret-32-bytes-long!!!",
+		SecureCookies:  false,
+		AuthRateLimit:  RateLimit{Every: time.Millisecond, Burst: 100000},
+		WriteRateLimit: RateLimit{Every: time.Hour, Burst: burst},
+	}))
+	defer strict.Close()
+
+	spammer := newBrowserAt(t, strict.URL)
+	spammer.register("write_spammer")
+
+	created := 0
+	throttled := false
+	for attempt := 1; attempt <= burst+3; attempt++ {
+		resp := spammer.post("/restaurants/new", "/restaurants", url.Values{
+			"name":        {"Spam Bistro " + strconv.Itoa(attempt)},
+			"image":       {"https://example.com/photo.jpg"},
+			"cuisine":     {"Italian"},
+			"priceRange":  {"$$"},
+			"description": {"One of many."},
+		})
+		status := resp.StatusCode
+		resp.Body.Close()
+
+		if status == http.StatusTooManyRequests {
+			throttled = true
+			break
+		}
+		created++
+	}
+
+	if !throttled {
+		t.Fatalf("%d restaurants were created without throttling, want a limit at %d", created, burst)
+	}
+	if created > burst {
+		t.Errorf("%d restaurants were created before throttling, want no more than %d", created, burst)
+	}
+
+	// Registration shares neither the bucket nor the limit, so a throttled
+	// writer has not been locked out of the rest of the site.
+	other := newBrowserAt(t, strict.URL)
+	other.register("write_bystander")
+}
+
+// Reading is not writing: a visitor who has exhausted the write budget can
+// still browse, and the limit must not touch pages that create nothing.
+func TestWriteRateLimitLeavesReadsAlone(t *testing.T) {
+	requireMongo(t)
+
+	strict := httptest.NewServer(Routes(Config{
+		PublicDir:      "../public",
+		CSRFSecret:     "test-csrf-secret-32-bytes-long!!!",
+		SecureCookies:  false,
+		AuthRateLimit:  RateLimit{Every: time.Millisecond, Burst: 100000},
+		WriteRateLimit: RateLimit{Every: time.Hour, Burst: 1},
+	}))
+	defer strict.Close()
+
+	writer := newBrowserAt(t, strict.URL)
+	writer.register("write_reader")
+
+	for range 3 {
+		resp := writer.post("/restaurants/new", "/restaurants", url.Values{
+			"name":        {"Reader Bistro"},
+			"image":       {"https://example.com/photo.jpg"},
+			"cuisine":     {"Italian"},
+			"priceRange":  {"$$"},
+			"description": {"Written until throttled."},
+		})
+		resp.Body.Close()
+	}
+
+	resp := writer.getResponse("/restaurants")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("browsing returned %d after the write budget ran out, want %d",
+			resp.StatusCode, http.StatusOK)
 	}
 }
 
