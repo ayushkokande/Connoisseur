@@ -20,7 +20,7 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 
-	"github.com/ayushkokande/Connoisseur/models"
+	"github.com/ayushkokande/Connoisseur/internal/models"
 )
 
 // These are integration tests: they need a MongoDB reachable at TEST_DATABASE_URL
@@ -84,7 +84,7 @@ func TestMain(m *testing.M) {
 			panic(err)
 		}
 		InitSessions("test-session-secret", false)
-		if err := InitTemplates("../templates"); err != nil {
+		if err := InitTemplates("../../templates"); err != nil {
 			panic(err)
 		}
 		provider = &fakeProvider{
@@ -98,7 +98,7 @@ func TestMain(m *testing.M) {
 		provider.server = httptest.NewServer(providerMux)
 
 		server = startServer(nil, provider, Config{
-			PublicDir:     "../public",
+			PublicDir:     "../../public",
 			CSRFSecret:    "test-csrf-secret-32-bytes-long!!!",
 			SecureCookies: false,
 			// The suite signs in dozens of times from one address, so the shared

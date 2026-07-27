@@ -4,7 +4,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/ayushkokande/Connoisseur/models"
+	"github.com/ayushkokande/Connoisseur/internal/models"
 )
 
 // pendingIdentity returns the identity a half-finished sign-in is waiting on a

@@ -11,7 +11,7 @@ import (
 
 	"golang.org/x/oauth2"
 
-	"github.com/ayushkokande/Connoisseur/models"
+	"github.com/ayushkokande/Connoisseur/internal/models"
 )
 
 // OAuthConfig describes the provider people sign in through. The endpoints are

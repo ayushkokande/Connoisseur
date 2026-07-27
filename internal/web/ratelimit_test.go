@@ -173,7 +173,7 @@ func TestAuthRateLimitThrottlesSignIn(t *testing.T) {
 
 	const burst = 3
 	strict := startServer(t, provider, Config{
-		PublicDir:      "../public",
+		PublicDir:      "../../public",
 		CSRFSecret:     "test-csrf-secret-32-bytes-long!!!",
 		SecureCookies:  false,
 		AuthRateLimit:  RateLimit{Every: time.Hour, Burst: burst},
@@ -214,7 +214,7 @@ func TestWriteRateLimitBoundsContentCreation(t *testing.T) {
 
 	const burst = 3
 	strict := startServer(t, provider, Config{
-		PublicDir:      "../public",
+		PublicDir:      "../../public",
 		CSRFSecret:     "test-csrf-secret-32-bytes-long!!!",
 		SecureCookies:  false,
 		AuthRateLimit:  RateLimit{Every: time.Millisecond, Burst: 100000},
@@ -263,7 +263,7 @@ func TestWriteRateLimitLeavesReadsAlone(t *testing.T) {
 	requireMongo(t)
 
 	strict := startServer(t, provider, Config{
-		PublicDir:      "../public",
+		PublicDir:      "../../public",
 		CSRFSecret:     "test-csrf-secret-32-bytes-long!!!",
 		SecureCookies:  false,
 		AuthRateLimit:  RateLimit{Every: time.Millisecond, Burst: 100000},
@@ -298,7 +298,7 @@ func TestAuthRateLimitLeavesTheFormReachable(t *testing.T) {
 	requireMongo(t)
 
 	strict := startServer(t, provider, Config{
-		PublicDir:      "../public",
+		PublicDir:      "../../public",
 		CSRFSecret:     "test-csrf-secret-32-bytes-long!!!",
 		SecureCookies:  false,
 		AuthRateLimit:  RateLimit{Every: time.Hour, Burst: 1},

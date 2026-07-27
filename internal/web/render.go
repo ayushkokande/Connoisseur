@@ -10,7 +10,7 @@ import (
 
 	"github.com/gorilla/csrf"
 
-	"github.com/ayushkokande/Connoisseur/models"
+	"github.com/ayushkokande/Connoisseur/internal/models"
 )
 
 var templates = map[string]*template.Template{}

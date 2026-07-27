@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ayushkokande/Connoisseur/models"
+	"github.com/ayushkokande/Connoisseur/internal/models"
 )
 
 // loggedIn reports whether the browser still has a working session.

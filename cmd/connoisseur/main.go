@@ -15,8 +15,8 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 
-	"github.com/ayushkokande/Connoisseur/models"
-	"github.com/ayushkokande/Connoisseur/web"
+	"github.com/ayushkokande/Connoisseur/internal/models"
+	"github.com/ayushkokande/Connoisseur/internal/web"
 )
 
 func env(key, fallback string) string {
