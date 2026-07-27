@@ -1,6 +1,8 @@
 package web
 
 import (
+	"crypto/hkdf"
+	"crypto/sha256"
 	"net/http"
 
 	"github.com/gorilla/sessions"
@@ -20,7 +22,11 @@ var store *sessions.CookieStore
 // session cookie is only sent over HTTPS, so it must be false for plain-HTTP
 // local development or no session will ever reach the server.
 func InitSessions(secret string, secure bool) {
-	store = sessions.NewCookieStore([]byte(secret))
+	// Two keys, so the cookie is encrypted as well as signed. With only a
+	// signing key the contents are authenticated but sit in the browser as
+	// readable base64, which puts the user's ID in the hands of anything that
+	// can see the cookie.
+	store = sessions.NewCookieStore(sessionKeys(secret))
 	store.Options = &sessions.Options{
 		Path:     "/",
 		HttpOnly: true,
@@ -28,6 +34,31 @@ func InitSessions(secret string, secure bool) {
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   sessionMaxAge,
 	}
+}
+
+// sessionKeys derives the signing and encryption keys the cookie store needs
+// from the one configured secret.
+//
+// They are derived rather than taken directly because the two must be
+// independent — reusing one value for both would let the signature and the
+// ciphertext be attacked as one — and because AES needs a key of exactly 16, 24
+// or 32 bytes, which a secret typed into an environment variable will not be.
+// HKDF gives a fixed-size key from a secret of any length, and separate info
+// strings make the two derivations unrelated.
+func sessionKeys(secret string) (auth, encryption []byte) {
+	const keyLen = 32 // HMAC-SHA256 for signing, AES-256 for encryption.
+
+	auth, err := hkdf.Key(sha256.New, []byte(secret), nil, "connoisseur session signing", keyLen)
+	if err != nil {
+		// Only reachable with an unusable hash or key length, both of which are
+		// fixed above, so this cannot happen at runtime.
+		panic("deriving the session signing key: " + err.Error())
+	}
+	encryption, err = hkdf.Key(sha256.New, []byte(secret), nil, "connoisseur session encryption", keyLen)
+	if err != nil {
+		panic("deriving the session encryption key: " + err.Error())
+	}
+	return auth, encryption
 }
 
 func getSession(r *http.Request) *sessions.Session {
