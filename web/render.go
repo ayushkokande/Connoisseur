@@ -31,6 +31,7 @@ func InitTemplates(dir string) error {
 		"auth/login",
 		"auth/register",
 		"account/edit",
+		"error",
 		"restaurants/index",
 		"restaurants/show",
 		"restaurants/new",
@@ -63,11 +64,41 @@ type viewData struct {
 }
 
 func render(w http.ResponseWriter, r *http.Request, page string, data map[string]any) {
+	if err := renderPage(w, r, http.StatusOK, page, data); err != nil {
+		logger(r).Error("rendering page", "page", page, "error", err)
+		RenderError(w, r, http.StatusInternalServerError, "Something went wrong rendering this page.")
+	}
+}
+
+// RenderError sends a styled page carrying an HTTP status, so a 404 or a
+// throttled request looks like the rest of the site rather than arriving as
+// bare text.
+//
+// If the error page is itself what fails to render, the reply falls back to
+// plain text. That matters more than it looks: the commonest caller is the
+// handler for a template that has just failed, and answering one render failure
+// with another would loop.
+func RenderError(w http.ResponseWriter, r *http.Request, status int, message string) {
+	if err := renderPage(w, r, status, "error", map[string]any{
+		"Status":  status,
+		"Message": message,
+	}); err != nil {
+		logger(r).Error("rendering the error page", "status", status, "error", err)
+		http.Error(w, message, status)
+	}
+}
+
+// renderPage writes one page at the given status, reporting whether it could be
+// produced at all. Nothing reaches the client unless the whole page rendered:
+// executing straight into the ResponseWriter would commit the status and part of
+// the body before a failure partway through could be noticed, leaving the
+// visitor with markup that stops mid-tag and no sign anything went wrong.
+func renderPage(w http.ResponseWriter, r *http.Request, status int, page string, data map[string]any) error {
 	t, ok := templates[page]
 	if !ok {
-		http.Error(w, "template not found: "+page, http.StatusInternalServerError)
-		return
+		return fmt.Errorf("template %q is not registered", page)
 	}
+
 	vd := viewData{
 		CurrentUser:  CurrentUser(r),
 		FlashSuccess: popFlashes(w, r, "success"),
@@ -76,22 +107,20 @@ func render(w http.ResponseWriter, r *http.Request, page string, data map[string
 		Nonce:        nonceFrom(r),
 		Data:         data,
 	}
-	// Rendered into a buffer first: executing straight into the ResponseWriter
-	// commits a 200 and part of the page before a failure partway through can be
-	// noticed, leaving the visitor with markup that stops mid-tag and no
-	// indication anything went wrong.
+
 	var rendered bytes.Buffer
 	if err := t.ExecuteTemplate(&rendered, "layout.html", vd); err != nil {
-		logger(r).Error("rendering page", "page", page, "error", err)
-		http.Error(w, "Something went wrong rendering this page.", http.StatusInternalServerError)
-		return
+		return err
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
 	if _, err := rendered.WriteTo(w); err != nil {
-		// The client went away mid-response; there is nothing left to say to it.
+		// The status and headers are already gone, so there is nothing left to
+		// tell the client: it went away mid-response.
 		logger(r).Warn("writing rendered page", "page", page, "error", err)
 	}
+	return nil
 }
 
 // fromNow renders a rough "3 hours ago" style timestamp.

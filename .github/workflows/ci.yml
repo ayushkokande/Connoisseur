@@ -65,7 +65,7 @@ jobs:
       # Raise it when coverage rises; never lower it to make a build pass.
       - name: Check coverage
         env:
-          COVERAGE_FLOOR: "68.0"
+          COVERAGE_FLOOR: "72.0"
         run: |
           go tool cover -func=coverage.out | tail -n 1
           total=$(go tool cover -func=coverage.out | awk '/^total:/ {print $3}' | tr -d '%')
