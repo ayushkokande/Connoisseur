@@ -55,7 +55,27 @@ jobs:
 
       # The web package's integration tests silently skip without a database,
       # so failing here means the service container never came up.
-      - run: go test -race ./...
+      # atomic is the counting mode -race requires.
+      - name: Test
+        run: go test -race -covermode=atomic -coverprofile=coverage.out ./...
+
+      # A floor rather than a target. It sits just under the current figure so
+      # that ordinary work does not trip it, and exists to catch a change that
+      # drops a meaningful amount of the suite rather than to chase a number.
+      # Raise it when coverage rises; never lower it to make a build pass.
+      - name: Check coverage
+        env:
+          COVERAGE_FLOOR: "68.0"
+        run: |
+          go tool cover -func=coverage.out | tail -n 1
+          total=$(go tool cover -func=coverage.out | awk '/^total:/ {print $3}' | tr -d '%')
+          awk -v total="$total" -v floor="$COVERAGE_FLOOR" 'BEGIN {
+            if (total + 0 < floor + 0) {
+              printf "coverage %.1f%% is below the %.1f%% floor\n", total, floor
+              exit 1
+            }
+            printf "coverage %.1f%% meets the %.1f%% floor\n", total, floor
+          }'
 
   docker:
     name: Build image
